@@ -238,7 +238,8 @@ CREATE TABLE config_versions (
   data_sign TEXT NOT NULL,
   version TEXT NOT NULL,
   created_at DATETIME NOT NULL,
-  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (name, version)
 );
 CREATE TRIGGER config_versions_updated_at AFTER UPDATE ON config_versions
   FOR EACH ROW BEGIN UPDATE config_versions SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id; END;

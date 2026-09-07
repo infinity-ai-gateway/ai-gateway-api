@@ -8,7 +8,9 @@
 
 - 每次导出时计算配置数据的 **MD5 签名**；
 - 与上一次导出的签名比较，若相同则返回 `Data: nil`，避免重复下发；
-- 若不同则生成新的版本号（时间戳格式），并持久化到 `config_versions` 表。
+- 若不同则生成新的版本号（14 位秒级时间戳格式），并持久化到 `config_versions` 表。
+
+版本号在同一 Topic 内**严格单调递增**：即使多次配置变更落在同一墙钟秒内，版本号也会逐次 +1 秒抬升，消费方按版本号轮询始终能感知变更（issue #142 修复，见 `design-docs/modifications/2026-09-07-issue-142-export-version-freeze/`）。
 
 这样下游组件通过携带 `version` 查询参数即可实现 **增量同步**。
 
@@ -83,7 +85,16 @@ var ZeroVersion = Version(time.Time{})
 | `data_sign` | 配置数据 MD5 签名 |
 | `version` | 对应版本号 |
 
-同一 Topic 下可有多条记录，按时间顺序递增。`VersionControlStorager.UpsertConfigLastExportedVersion` 会返回最新签名对应的版本号；若签名不存在则新增记录。
+同一 Topic 下可有多条记录，按版本号严格递增。表上具有 `UNIQUE(name, version)` 约束（`uk_name_version`），数据库层保证同一主题不会出现重复版本行。
+
+`VersionControlStorager.UpsertConfigLastExportedVersion` 的行为：
+
+1. 按 `ORDER BY version DESC, id DESC` 读取该 Topic 的最新一行（平局时取 `id` 最大即最晚插入的行）；
+2. 若最新行 `data_sign` 与当前重建内容的签名一致，直接返回其版本号（内容未变，不新增记录）；
+3. 否则计算候选版本 `max(当前秒, 最新版本 + 1s)` 并插入新记录；
+4. 若插入命中唯一约束（并发导出交错等残余竞态），重读最新行、版本再 +1s 重试（上限 3 次），不再整单报错。
+
+> 说明：第 3 步的 +1s 抬升使版本号不依赖墙钟前进——同秒连续变更、时钟回拨/偏移场景下，版本号仍保持同 Topic 内严格单调递增。修复前版本号直接取 `time.Now()` 的秒级时间串，同秒第二次"内容已变"的导出会产生同 `(name, version)` 重复行，且 sign 短路可能将版本推进永久楔死（issue #142）。
 
 ---
 
@@ -362,7 +373,9 @@ Authorization: Token <token>
 |------|------|
 | 首次导出（`config_versions` 无记录） | 生成新记录，返回全量配置 |
 | 配置未变化 | 返回 `Data: nil`，不生成新记录 |
-| 配置变化但版本号相同 | 不可能，因为版本号基于当前时间生成 |
+| 配置变化但版本号相同 | 不可能：候选版本取 `max(当前秒, 最新版本 + 1s)`，同秒连续变更也会逐次 +1 秒抬升（issue #142） |
+| 并发导出竞争同一版本号 | 唯一约束拦截后到者，重读最新行 +1s 重试（上限 3 次）；若并发请求已为相同内容建过版本则直接返回其版本号 |
+| 本地时钟回拨/慢于库内最新版本 | 版本抬升至 `最新版本 + 1s`，不产生重复或倒退版本 |
 | `generator` 返回错误 | 直接返回错误，不更新 `config_versions` |
 | `DataWithoutVersion.UpdateVersion` 失败 | 中断导出流程 |
 | `extra_files` 不存在 | 返回 `Record Not Exist`（404） |
