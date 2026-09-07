@@ -234,7 +234,8 @@ CREATE TABLE `config_versions` (
   `version` varchar(255) NOT NULL,
   `created_at` datetime NOT NULL,
   `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_name_version` (`name`, `version`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 
