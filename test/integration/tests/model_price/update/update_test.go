@@ -135,6 +135,58 @@ func TestModelPrice_Update(t *testing.T) {
 		testutil.AssertErrCode(t, resp, 422)
 	})
 
+	t.Run("MP-6-005 按 id 只传单个价格键时其余键保留", func(t *testing.T) {
+		provider := testutil.UniqueName("provider")
+		model := "update-partial-merge"
+		id, err := testutil.CreateModelPrice(map[string]interface{}{
+			"provider":   provider,
+			"model":      model,
+			"base_model": model,
+			"mode":       "chat",
+			"prices": map[string]interface{}{
+				"input_cost_per_token":  0.0000051,
+				"output_cost_per_token": 0.0000062,
+			},
+		})
+		if err != nil {
+			t.Fatalf("setup failed: %v", err)
+		}
+		defer testutil.DeleteModelPrice(id)
+
+		resp, err := testutil.GetClient().Put("/open-api/v1/model-prices/"+fmt.Sprintf("%d", id), map[string]interface{}{
+			"prices": map[string]interface{}{
+				"input_cost_per_token": 0.0000031,
+			},
+		})
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+
+		var data map[string]interface{}
+		if err := json.Unmarshal(resp.Data, &data); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		prices := data["prices"].(map[string]interface{})
+		assert.InDelta(t, 0.0000031, prices["input_cost_per_token"], 0.0000001)
+		assert.InDelta(t, 0.0000062, prices["output_cost_per_token"], 0.0000001,
+			"unsubmitted price key must keep its value (issue #140)")
+
+		// verify persisted state via GET
+		getResp, err := testutil.GetClient().Get("/open-api/v1/model-prices/" + fmt.Sprintf("%d", id))
+		if err != nil {
+			t.Fatalf("get failed: %v", err)
+		}
+		testutil.AssertSuccess(t, getResp)
+		var got map[string]interface{}
+		if err := json.Unmarshal(getResp.Data, &got); err != nil {
+			t.Fatalf("unmarshal get: %v", err)
+		}
+		gotPrices := got["prices"].(map[string]interface{})
+		assert.InDelta(t, 0.0000031, gotPrices["input_cost_per_token"], 0.0000001)
+		assert.InDelta(t, 0.0000062, gotPrices["output_cost_per_token"], 0.0000001)
+	})
+
 	t.Run("MP-7-001 按组合键更新 prices", func(t *testing.T) {
 		provider := testutil.UniqueName("provider")
 		model := "update-query-model"
@@ -219,5 +271,47 @@ func TestModelPrice_Update(t *testing.T) {
 			t.Fatalf("request failed: %v", err)
 		}
 		testutil.AssertErrCode(t, resp, 422)
+	})
+
+	t.Run("MP-7-004 按组合键只传单个价格键时其余键保留", func(t *testing.T) {
+		provider := testutil.UniqueName("provider")
+		model := "update-query-partial-merge"
+		id, err := testutil.CreateModelPrice(map[string]interface{}{
+			"provider":   provider,
+			"model":      model,
+			"base_model": model,
+			"mode":       "chat",
+			"prices": map[string]interface{}{
+				"input_cost_per_token":        0.0000051,
+				"cache_read_input_token_cost": 0.0000031,
+			},
+		})
+		if err != nil {
+			t.Fatalf("setup failed: %v", err)
+		}
+		defer testutil.DeleteModelPrice(id)
+
+		resp, err := testutil.GetClient().PutWithQuery("/open-api/v1/model-prices", map[string]string{
+			"provider": provider,
+			"model":    model,
+			"mode":     "chat",
+		}, map[string]interface{}{
+			"prices": map[string]interface{}{
+				"input_cost_per_token": 0.0000041,
+			},
+		})
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+
+		var data map[string]interface{}
+		if err := json.Unmarshal(resp.Data, &data); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		prices := data["prices"].(map[string]interface{})
+		assert.InDelta(t, 0.0000041, prices["input_cost_per_token"], 0.0000001)
+		assert.InDelta(t, 0.0000031, prices["cache_read_input_token_cost"], 0.0000001,
+			"unsubmitted price key must keep its value (issue #140)")
 	})
 }

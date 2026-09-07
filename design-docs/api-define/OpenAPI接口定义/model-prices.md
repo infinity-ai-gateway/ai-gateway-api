@@ -566,6 +566,10 @@ models:
 
 字段同 [1. 数据模型](#1-数据模型)，仅传需修改字段，未传入字段保持原值。请求体中无需传入 `id`、`price_currency`、`create_time`、`update_time`。
 
+> map/切片字段更新粒度：
+> - `prices`、`tier_prices`：**键级合并**。请求中传入的键覆盖对应键，未传入的键保留原值；`tier_prices` 未传入的 tier 整档保留（见 issue #140 修复）。
+> - `limits`、`metadata`（map）、`capabilities`、`supported_parameters`（切片）：**整块替换**。传入即整体覆盖，未传入则保持原值不变。
+
 **返回数据（Data内容）**
 
 返回更新后的完整记录，字段同 [1. 数据模型](#1-数据模型)。
@@ -594,6 +598,10 @@ models:
 **输入参数（Body）**
 
 字段同 [1. 数据模型](#1-数据模型)，仅传需修改字段，未传入字段保持原值。请求体中无需传入 `price_currency`、`create_time`、`update_time`。
+
+> map/切片字段更新粒度：
+> - `prices`、`tier_prices`：**键级合并**。请求中传入的键覆盖对应键，未传入的键保留原值；`tier_prices` 未传入的 tier 整档保留（见 issue #140 修复）。
+> - `limits`、`metadata`（map）、`capabilities`、`supported_parameters`（切片）：**整块替换**。传入即整体覆盖，未传入则保持原值不变。
 
 **返回数据（Data内容）**
 
