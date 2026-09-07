@@ -687,6 +687,7 @@ models:
 | MP-6-002 | 更新不存在的记录 | 异常参数 | 返回 404 |
 | MP-6-003 | 更新为非法 mode | 合法性条件 | 返回 422 |
 | MP-6-004 | 更新 limits 为负数 | 合法性条件 | 返回 422 |
+| MP-6-005 | 只传单个价格键时其余键保留 | 正常参数 | PUT 仅传 `prices` 单键，未传入的价格键保留原值（issue #140） |
 
 ### 12.4 测试场景详细设计
 
@@ -781,6 +782,7 @@ models:
 | MP-7-001 | 按组合键更新 prices | 正常参数 | 更新成功 |
 | MP-7-002 | 缺少 query 参数 | 必填校验 | 返回 422 |
 | MP-7-003 | 按组合键更新 limits 为负数 | 合法性条件 | 返回 422 |
+| MP-7-004 | 按组合键只传单个价格键时其余键保留 | 正常参数 | PUT 仅传 `prices` 单键，未传入的价格键保留原值（issue #140） |
 
 ---
 
@@ -974,6 +976,7 @@ models:
 | MTP-1-004 | tier_prices 含负数价格 | 合法性条件 | `tier_prices.peak.input_cost_per_token=-0.001`，返回 422 |
 | MTP-1-005 | 更新 tier_prices | 正常参数 | PUT `/model-prices/{id}` 可单独更新 `tier_prices` |
 | MTP-1-006 | model-list.yaml 导入含 tier_prices | 正常参数 | 导入的 YAML 携带 `tier_prices`，列表查询返回一致 |
+| MTP-1-007 | 部分更新 tier_prices 同档未传键保留 | 正常参数 | PUT 只传 `tier_prices.peak` 单键时同档未传键保留原值（issue #140；未传 tier 整档保留、新 tier 加入由 `mergeTierPriceMap` 单测覆盖，当前校验仅允许 `peak` 档） |
 
 ### 17.3 请求参数示例
 
