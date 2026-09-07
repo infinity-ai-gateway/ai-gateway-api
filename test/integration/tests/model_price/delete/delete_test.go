@@ -1,13 +1,11 @@
 package model_price_test
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"testing"
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/integration/testutil"
-	"github.com/stretchr/testify/assert"
 )
 
 var sm *testutil.ServerManager
@@ -45,12 +43,7 @@ func TestModelPrice_Delete(t *testing.T) {
 			t.Fatalf("request failed: %v", err)
 		}
 		testutil.AssertSuccess(t, resp)
-
-		var data map[string]interface{}
-		if err := json.Unmarshal(resp.Data, &data); err != nil {
-			t.Fatalf("unmarshal: %v", err)
-		}
-		assert.Equal(t, true, data["deleted"])
+		testutil.AssertDataNull(t, resp)
 
 		getResp, err := testutil.GetClient().Get("/open-api/v1/model-prices/" + fmt.Sprintf("%d", id))
 		if err != nil {
@@ -92,12 +85,7 @@ func TestModelPrice_Delete(t *testing.T) {
 			t.Fatalf("request failed: %v", err)
 		}
 		testutil.AssertSuccess(t, resp)
-
-		var data map[string]interface{}
-		if err := json.Unmarshal(resp.Data, &data); err != nil {
-			t.Fatalf("unmarshal: %v", err)
-		}
-		assert.Equal(t, true, data["deleted"])
+		testutil.AssertDataNull(t, resp)
 
 		getResp, err := testutil.GetClient().Get("/open-api/v1/model-prices/" + fmt.Sprintf("%d", id))
 		if err != nil {

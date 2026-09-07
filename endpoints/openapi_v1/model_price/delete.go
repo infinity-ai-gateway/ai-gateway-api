@@ -58,7 +58,7 @@ func DeleteAction(req *http.Request) (interface{}, error) {
 	if err := container.ModelPriceManager.DeleteModelPrice(req.Context(), &imodel_price.ModelPriceFilter{ID: id}); err != nil {
 		return nil, err
 	}
-	return map[string]interface{}{"deleted": true}, nil
+	return nil, nil
 }
 
 // DeleteByQueryAction handles DELETE /model-prices?provider=&model=&mode=.
@@ -79,5 +79,5 @@ func DeleteByQueryAction(req *http.Request) (interface{}, error) {
 	if err := container.ModelPriceManager.DeleteModelPrice(req.Context(), filter); err != nil {
 		return nil, err
 	}
-	return map[string]interface{}{"deleted": true}, nil
+	return nil, nil
 }

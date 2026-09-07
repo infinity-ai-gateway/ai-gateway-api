@@ -30,6 +30,17 @@ func AssertErrCode(t *testing.T, resp *APIResponse, expectedErrNum int) {
 	}
 }
 
+// AssertDataNull 验证 Data 为 null
+func AssertDataNull(t *testing.T, resp *APIResponse) {
+	t.Helper()
+	if resp == nil {
+		t.Fatal("response is nil")
+	}
+	if len(resp.Data) != 0 && string(resp.Data) != "null" {
+		t.Errorf("expected Data null, got %s", string(resp.Data))
+	}
+}
+
 // AssertDataNotEmpty 验证 Data 不为空
 func AssertDataNotEmpty(t *testing.T, resp *APIResponse) {
 	t.Helper()
