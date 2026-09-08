@@ -324,6 +324,74 @@ func TestModelPrice_Import(t *testing.T) {
 
 		_, _, _ = testutil.ImportModelPricesWithResult([]byte(buildYAML(nil)), "replace")
 	})
+
+	t.Run("MP-1-009 科学计数法价格导入", func(t *testing.T) {
+		provider := testutil.UniqueName("provider")
+		// buildYAML uses %v formatting, which prints small float64 values
+		// in scientific notation (e.g. 7.6234102728e-08).
+		yaml := buildYAML([]map[string]interface{}{
+			{
+				"provider": provider,
+				"model":    "sci-notation-model",
+				"mode":     "chat",
+				"prices": map[string]float64{
+					"input_cost_per_token":  7.6234102728e-08,
+					"output_cost_per_token": 4.141631732e-06,
+				},
+			},
+		})
+		assert.Contains(t, yaml, "7.6234102728e-08")
+
+		result, resp, err := testutil.ImportModelPricesWithResult([]byte(yaml), "replace")
+		if err != nil {
+			t.Fatalf("import failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		assert.Equal(t, 1, result.ImportedCount)
+
+		list, err := fetchModelPriceList()
+		if err != nil {
+			t.Fatalf("list failed: %v", err)
+		}
+		var item *modelPriceDTO
+		for i := range list.List {
+			if list.List[i].Provider == provider {
+				item = &list.List[i]
+				break
+			}
+		}
+		if item == nil {
+			t.Fatalf("imported price not found for provider %s", provider)
+		}
+		// Scientific notation and decimal notation are equivalent float64 values.
+		assert.InDelta(t, 7.6234102728e-08, item.Prices["input_cost_per_token"], 1e-20)
+		assert.InDelta(t, 4.141631732e-06, item.Prices["output_cost_per_token"], 1e-20)
+
+		_, _, _ = testutil.ImportModelPricesWithResult([]byte(buildYAML(nil)), "replace")
+	})
+
+	t.Run("MP-1-010 超精度价格拒绝", func(t *testing.T) {
+		provider := testutil.UniqueName("provider")
+		yaml := buildYAML([]map[string]interface{}{
+			{
+				"provider": provider,
+				"model":    "excessive-precision-model",
+				"mode":     "chat",
+				"prices": map[string]float64{
+					// 1e8 * 1e8 = 1e16 >= 2^53 (~9.007e15), exceeds the representable limit.
+					"input_cost_per_token": 1e8,
+				},
+			},
+		})
+
+		resp, err := testutil.GetClient().PostMultipartFile("/open-api/v1/model-prices/import", "file", "model-list.yaml", []byte(yaml), map[string]string{
+			"mode": "replace",
+		})
+		if err != nil {
+			t.Fatalf("import failed: %v", err)
+		}
+		testutil.AssertErrCode(t, resp, 422)
+	})
 }
 
 func buildYAML(models []map[string]interface{}) string {
