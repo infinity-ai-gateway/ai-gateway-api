@@ -19,6 +19,8 @@ import (
 	"math"
 	"strings"
 
+	"github.com/bfenetworks/go-lib/quota"
+
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xerror"
 )
 
@@ -115,6 +117,21 @@ var ValidPriceKeys = map[string]bool{
 	"output_cost_per_video_per_second":           true,
 }
 
+// maxPriceFixedPoint is the largest price value (scaled by quota.RmbPrecision)
+// that still keeps the downstream float64 cost computation
+// (usage * (price * 1e8)) exactly representable: float64 integers stay exact
+// up to 2^53.
+const maxPriceFixedPoint = 1 << 53
+
+// checkPricePrecision rejects prices whose scaled value reaches 2^53, where
+// float64 can no longer represent the downstream cost computation exactly.
+func checkPricePrecision(key string, v float64) error {
+	if v*quota.RmbPrecision >= maxPriceFixedPoint {
+		return xerror.WrapParamErrorWithMsg("price %s exceeds the maximum representable precision", key)
+	}
+	return nil
+}
+
 // Metadata key enums.
 var ValidMetadataKeys = map[string]bool{
 	"source": true,
@@ -191,6 +208,9 @@ func ValidateModelPrice(m *ModelPrice) error {
 		if v < 0 {
 			return xerror.WrapParamErrorWithMsg("price %s must be >= 0", k)
 		}
+		if err := checkPricePrecision(k, v); err != nil {
+			return err
+		}
 	}
 
 	for tierName, tierPrices := range m.TierPrices {
@@ -207,6 +227,9 @@ func ValidateModelPrice(m *ModelPrice) error {
 			}
 			if v < 0 {
 				return xerror.WrapParamErrorWithMsg("tier price %s in tier %s must be >= 0", k, tierName)
+			}
+			if err := checkPricePrecision(fmt.Sprintf("%s in tier %s", k, tierName), v); err != nil {
+				return err
 			}
 		}
 	}

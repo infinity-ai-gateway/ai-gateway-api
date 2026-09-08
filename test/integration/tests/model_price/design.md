@@ -30,7 +30,7 @@ Model Price 模块负责模型定价数据的管理，支持：
 
 | 接口 | 测试用例数 |
 |------|-----------|
-| 整表导入 | 8 |
+| 整表导入 | 10 |
 | 新增单条记录 | 8 |
 | 分页列表查询 | 4 |
 | 按 ID 查询单条 | 2 |
@@ -171,6 +171,8 @@ MTP-1-{场景编号}
 | MP-1-006 | 重复三元组 | 异常参数 | YAML 内 (provider,model,mode) 重复，返回 422 |
 | MP-1-007 | limits 包含负数 | 合法性条件 | 返回 422 |
 | MP-1-008 | 未知 provider 可导入 | 正常参数 | provider 不存在于 `/providers` 时仍可导入 |
+| MP-1-009 | 科学计数法价格导入 | 正常参数 | 10~12 位小数价格以科学计数法书写，导入后按 float64 等价解析 |
+| MP-1-010 | 超精度价格拒绝 | 合法性条件 | 价格 × 1e8 ≥ 2^53 时导入返回 422 |
 
 ### 7.4 测试场景详细设计
 
@@ -312,6 +314,67 @@ models:
 | imported_count | 1 | Equals |
 | skipped_count | 0 | Equals |
 | errors | 空数组 | Len=0 |
+
+---
+
+#### MP-1-009：科学计数法价格导入（正常参数）
+
+##### 设计思路
+
+验证 `model-list.yaml` 中的价格支持科学计数法表示（v0.6 放开，与十进制表示法等价合法）。目录数据中存在 10~12 位小数价格（如 `7.6234102728e-08`），十进制展开可读性差，科学计数法为权威书写方式。
+
+##### 执行步骤
+
+1. 构造 `model-list.yaml`，价格以科学计数法书写：`input_cost_per_token: 7.6234102728e-08`、`output_cost_per_token: 4.141631732e-06`。
+2. 以 `mode=replace` 调用导入接口。
+3. 验证返回 200，`imported_count=1`。
+4. 按 `(provider, model, mode)` 查询记录，验证价格为等价 float64 值（`7.6234102728e-08` 与 `0.000000076234102728` 相等）。
+
+##### 请求参数
+
+```yaml
+version: v1.0
+default_currency: RMB
+models:
+  - provider: <unique-provider>
+    model: sci-notation-model
+    base_model: sci-notation-model
+    mode: chat
+    prices:
+      input_cost_per_token: 7.6234102728e-08
+      output_cost_per_token: 4.141631732e-06
+```
+
+##### 预期返回结果
+
+**ErrNum**：200  
+**Data 字段校验**：
+
+| 字段 | 预期值 | 校验方式 |
+|------|--------|---------|
+| imported_count | 1 | Equals |
+| skipped_count | 0 | Equals |
+
+记录查询校验：`prices.input_cost_per_token` = `7.6234102728e-08`（InDelta，1e-20）。
+
+---
+
+#### MP-1-010：超精度价格拒绝（合法性条件）
+
+##### 设计思路
+
+验证价格折算 `价格 × 1e8` 不得超过 2^53（约 9e15）。该上限保证下游 BFE 浮点成本计算 `用量 × (价格 × 1e8)` 在 float64 整数精确表示范围内；正常价格（< 1 元/token）不会触发，仅防御异常输入。
+
+##### 执行步骤
+
+1. 构造 `model-list.yaml`，其中 `input_cost_per_token: 9e7`（`9e7 × 1e8 = 9e15 ≥ 2^53`）。
+2. 以 `mode=replace` 调用导入接口。
+3. 验证返回 422。
+
+##### 预期返回结果
+
+**ErrNum**：422  
+**ErrMsg**：包含 price exceeds the maximum representable precision 错误信息
 
 ---
 

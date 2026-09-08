@@ -92,6 +92,23 @@ func TestValidateModelPrice(t *testing.T) {
 			}
 			return p
 		}(), true},
+		{"excessive price precision", func() *ModelPrice {
+			p := validModelPrice()
+			p.Prices["input_cost_per_token"] = (1 << 53) / 1e8
+			return p
+		}(), true},
+		{"excessive tier price precision", func() *ModelPrice {
+			p := validModelPrice()
+			p.TierPrices = TierPriceMap{
+				"peak": {"input_cost_per_token": (1 << 53) / 1e8},
+			}
+			return p
+		}(), true},
+		{"valid high precision price", func() *ModelPrice {
+			p := validModelPrice()
+			p.Prices["input_cost_per_token"] = 7.6234102728e-08
+			return p
+		}(), false},
 		{"empty tier prices", func() *ModelPrice {
 			p := validModelPrice()
 			p.TierPrices = TierPriceMap{

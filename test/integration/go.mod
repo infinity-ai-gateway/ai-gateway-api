@@ -4,7 +4,7 @@ go 1.22
 
 require (
 	github.com/alicebob/miniredis/v2 v2.34.0
-	github.com/bfenetworks/go-lib v0.0.3
+	github.com/bfenetworks/go-lib v0.0.4
 	github.com/glebarez/go-sqlite v1.21.2
 	github.com/rainway-ai-gateway/ai-gateway-api v0.0.0
 	github.com/stretchr/testify v1.11.1
