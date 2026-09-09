@@ -18,7 +18,7 @@ Provider 与 Cluster 概念分离后：
 | PV-1 | 创建 Provider | POST | `/open-api/v1/providers` | 创建模型提供商 |
 | PV-2 | 查询 Provider 列表 | GET | `/open-api/v1/providers` | 未携带 `page`/`page_size` 时返回全部；携带时按分页返回；支持 `model_protocol` 过滤 |
 | PV-3 | 查询 Provider 详情 | GET | `/open-api/v1/providers/{provider_name}` | - |
-| PV-4 | 更新 Provider | PATCH | `/open-api/v1/providers/{provider_name}` | 全量替换 `keys`、`models` 等数组字段 |
+| PV-4 | 更新 Provider | PATCH | `/open-api/v1/providers/{provider_name}` | 部分更新：未提供的字段保留原值；显式提供的 `keys`、`models` 等数组字段按全量替换处理 |
 | PV-5 | 删除 Provider | DELETE | `/open-api/v1/providers/{provider_name}` | 删除前检查 cluster/model-price 引用 |
 | PV-6 | 触发模型发现 | POST | `/open-api/v1/providers/tools/discover-models` | 无状态工具接口，不绑定 Provider |
 | PV-7 | 获取所有 Provider 名称 | GET | `/open-api/v1/providers/actions/get-provider-names` | 返回全量 provider 名称列表 |
@@ -558,7 +558,7 @@ provider/
 | 接口名称 | 更新 Provider |
 | 方法 | PATCH |
 | 路径 | `/open-api/v1/providers/{provider_name}` |
-| 说明 | `keys`、`models` 等数组字段按全量替换处理 |
+| 说明 | 部分更新语义：请求体未提供的字段（`description`、`model_endpoint`、`models`、`keys`、`time_zone`、`tiers` 等）保留原值；显式提供的数组字段按全量替换处理 |
 
 ### 9.2 请求参数
 
@@ -575,6 +575,10 @@ provider/
 | PV-4-005 | 请求体不包含 `name` | 200，返回的 `name` 与 URI 一致 |
 | PV-4-005a | 更新时 instance_pool 不再包含 name 字段 | 200，返回的 instance 中无 `name` 字段 |
 | PV-4-006 | 请求体包含 `name` | 422 |
+| PV-4-007 | 省略字段保留原值（issue #147） | 200，`description` 更新成功，未提供的 `time_zone`/`tiers`/`models`/`keys`/`model_endpoint` 全部保留原值 |
+| PV-4-008 | 只更新 `time_zone` | 200，`time_zone` 更新成功，其余字段（含 `tiers`）保留原值 |
+| PV-4-009 | 显式空数组清空字段 | 200，显式传入的 `models`/`keys`/`tiers` 被清空，未提供的 `time_zone`/`description`/`model_endpoint` 保留原值 |
+| PV-4-010 | 非法 `time_zone` | 422，且已存储的 `time_zone` 不被修改 |
 
 ### 9.4 测试场景详细设计
 
@@ -688,6 +692,30 @@ provider/
 ##### 预期返回结果
 
 **ErrNum**：422
+
+#### 9.4.5 PV-4-007 ~ PV-4-010：部分更新语义（issue #147）
+
+##### 设计思路
+
+验证 PATCH 为部分更新语义：请求体未提供的字段保留原值，显式提供的字段（含空数组）正常更新。回归 issue #147——修复前省略 `time_zone`/`tiers`/`models`/`keys`/`model_endpoint` 会被静默覆盖为默认值或清空。
+
+测试前置：创建 Provider 时设置自定义 `time_zone=UTC`、`model_endpoint={http, /custom/models}`、`models=["deepseek-chat","deepseek-coder"]`，并通过 `PUT /providers/{name}/pricing-tiers` 设置 peak 时段模板；`keys` 使用创建时的默认两个 Key。
+
+##### 执行步骤
+
+1. **PV-4-007**：PATCH 请求体只含 `description`（另附校验必填的 `instance_pool`、`model_protocols`），随后 GET 详情，断言 `time_zone`/`tiers`/`models`/`keys`/`model_endpoint` 与前置值一致。
+2. **PV-4-008**：PATCH 请求体只含 `time_zone=Europe/London`，断言更新成功且 `description`、`tiers`、`keys`、`model_endpoint` 保留。
+3. **PV-4-009**：PATCH 请求体显式传 `models=[]`、`keys=[]`、`tiers=[]`，断言三者被清空，而省略的 `time_zone`/`description`/`model_endpoint` 保留。
+4. **PV-4-010**：PATCH 请求体传非法 `time_zone=Not/AZone`，断言返回 422，且 GET 详情确认存储值未被修改。
+
+##### 预期返回结果
+
+| 用例 | 预期 |
+|------|------|
+| PV-4-007 | 200，未提供的五项字段全部保留原值 |
+| PV-4-008 | 200，`time_zone` 更新为 `Europe/London`，其余字段保留 |
+| PV-4-009 | 200，显式空数组字段被清空，省略字段保留 |
+| PV-4-010 | 422，存储的 `time_zone` 不被修改 |
 
 
 ## 10. Provider instance_pool 同步到 Inner API

@@ -510,6 +510,12 @@ func ValidateProviderParam(param *ProviderParam) error {
 		}
 	}
 
+	if param.TimeZone != nil {
+		if err := validateTimeZone(*param.TimeZone); err != nil {
+			return err
+		}
+	}
+
 	if err := validatePricingTiers(param.Tiers); err != nil {
 		return err
 	}

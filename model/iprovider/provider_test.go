@@ -276,6 +276,97 @@ func TestProviderManager_UpdateProvider(t *testing.T) {
 	})
 }
 
+func TestProviderManager_UpdateProvider_OmittedFieldsReachStoragerAsNil(t *testing.T) {
+	ctx := context.Background()
+
+	var captured *ProviderParam
+	store := &fakeProviderStorager{
+		fetchFn: func(ctx context.Context, filter *ProviderFilter) (*Provider, error) {
+			return &Provider{
+				Name:         "deepseek",
+				Models:       []string{"deepseek-chat"},
+				Keys:         []ProviderKey{{Name: "key-primary", Key: "sk-aaaaaaaaaaaa"}},
+				TimeZone:     "UTC",
+				InstancePool: []ProviderInstance{{Addr: "api.deepseek.com", Port: 443, Weight: 100}},
+			}, nil
+		},
+		updateFn: func(ctx context.Context, name string, param *ProviderParam) error {
+			captured = param
+			return nil
+		},
+	}
+	m := NewProviderManager(&fakeTxn{}, store)
+
+	// PATCH body only carries instance_pool/model_protocols (required by
+	// validation) plus a new description; all other fields are omitted.
+	param := &ProviderParam{
+		Name:           lib.PString("deepseek"),
+		Description:    lib.PString("new description"),
+		InstancePool:   []ProviderInstance{{Addr: "api.deepseek.com", Port: 443, Weight: 100}},
+		ModelProtocols: []string{"openai"},
+	}
+	err := m.UpdateProvider(ctx, "deepseek", param)
+	require.NoError(t, err)
+	require.NotNil(t, captured)
+
+	// Omitted fields must reach the storager as nil so the DAO layer keeps
+	// the existing column values (partial update semantics).
+	assert.Nil(t, captured.ModelEndpoint)
+	assert.Nil(t, captured.Models)
+	assert.Nil(t, captured.Keys)
+	assert.Nil(t, captured.TimeZone)
+	assert.Nil(t, captured.Tiers)
+	// Provided fields are passed through.
+	require.NotNil(t, captured.Description)
+	assert.Equal(t, "new description", *captured.Description)
+	assert.NotEmpty(t, captured.InstancePool)
+	assert.NotEmpty(t, captured.ModelProtocols)
+}
+
+func TestProviderManager_UpdateProvider_ExplicitEmptyKeysTriggerHook(t *testing.T) {
+	ctx := context.Background()
+
+	var captured *ProviderParam
+	store := &fakeProviderStorager{
+		fetchFn: func(ctx context.Context, filter *ProviderFilter) (*Provider, error) {
+			return &Provider{
+				Name:           "deepseek",
+				Models:         []string{"deepseek-chat"},
+				Keys:           []ProviderKey{{Name: "key-primary", Key: "sk-aaaaaaaaaaaa"}},
+				InstancePool:   []ProviderInstance{{Addr: "api.deepseek.com", Port: 443, Weight: 100}},
+				ModelProtocols: []string{"openai"},
+			}, nil
+		},
+		updateFn: func(ctx context.Context, name string, param *ProviderParam) error {
+			captured = param
+			return nil
+		},
+	}
+	m := NewProviderManager(&fakeTxn{}, store)
+
+	hookCalled := 0
+	hook := func(ctx context.Context, oldProvider, newProvider *Provider) error {
+		hookCalled++
+		return nil
+	}
+
+	// Explicitly passing an empty key list is an intentional clear; the key
+	// ref checker hook must run, and the storager must receive a non-nil
+	// empty slice (not nil, which would mean "keep existing").
+	param := &ProviderParam{
+		Name:           lib.PString("deepseek"),
+		Keys:           []ProviderKey{},
+		InstancePool:   []ProviderInstance{{Addr: "api.deepseek.com", Port: 443, Weight: 100}},
+		ModelProtocols: []string{"openai"},
+	}
+	err := m.UpdateProvider(ctx, "deepseek", param, hook)
+	require.NoError(t, err)
+	assert.Equal(t, 1, hookCalled)
+	require.NotNil(t, captured)
+	require.NotNil(t, captured.Keys)
+	assert.Empty(t, captured.Keys)
+}
+
 func TestProviderManager_DeleteProvider(t *testing.T) {
 	ctx := context.Background()
 
@@ -588,6 +679,24 @@ func TestValidateProviderParam(t *testing.T) {
 		p := validProviderParam()
 		p.Keys = []ProviderKey{{Name: "k", Key: "a"}, {Name: "k", Key: "b"}}
 		require.Error(t, ValidateProviderParam(p))
+	})
+
+	t.Run("invalid time zone", func(t *testing.T) {
+		p := validProviderParam()
+		p.TimeZone = lib.PString("Not/AZone")
+		require.Error(t, ValidateProviderParam(p))
+	})
+
+	t.Run("valid time zone", func(t *testing.T) {
+		p := validProviderParam()
+		p.TimeZone = lib.PString("UTC")
+		require.NoError(t, ValidateProviderParam(p))
+	})
+
+	t.Run("nil time zone kept optional", func(t *testing.T) {
+		p := validProviderParam()
+		p.TimeZone = nil
+		require.NoError(t, ValidateProviderParam(p))
 	})
 }
 
