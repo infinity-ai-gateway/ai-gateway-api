@@ -56,14 +56,46 @@ func TestValidateModelPrice(t *testing.T) {
 		{"invalid capability", func() *ModelPrice { p := validModelPrice(); p.Capabilities = []string{"unknown"}; return p }(), true},
 		{"invalid supported parameter", func() *ModelPrice { p := validModelPrice(); p.SupportedParameters = []string{"unknown"}; return p }(), true},
 		{"invalid limit key", func() *ModelPrice { p := validModelPrice(); p.Limits = map[string]interface{}{"unknown": 1}; return p }(), true},
-		{"negative limit int", func() *ModelPrice { p := validModelPrice(); p.Limits = map[string]interface{}{"context_window": -1}; return p }(), true},
-		{"negative limit float64", func() *ModelPrice { p := validModelPrice(); p.Limits = map[string]interface{}{"context_window": float64(-1)}; return p }(), true},
-		{"non-integer limit", func() *ModelPrice { p := validModelPrice(); p.Limits = map[string]interface{}{"context_window": 1.5}; return p }(), true},
-		{"non-numeric limit", func() *ModelPrice { p := validModelPrice(); p.Limits = map[string]interface{}{"context_window": "abc"}; return p }(), true},
-		{"valid zero limit", func() *ModelPrice { p := validModelPrice(); p.Limits = map[string]interface{}{"context_window": 0}; return p }(), false},
-		{"valid positive limit", func() *ModelPrice { p := validModelPrice(); p.Limits = map[string]interface{}{"context_window": 128000}; return p }(), false},
-		{"valid positive limit float64", func() *ModelPrice { p := validModelPrice(); p.Limits = map[string]interface{}{"context_window": float64(128000)}; return p }(), false},
-		{"invalid metadata key", func() *ModelPrice { p := validModelPrice(); p.Metadata = map[string]interface{}{"unknown": 1}; return p }(), true},
+		{"negative limit int", func() *ModelPrice {
+			p := validModelPrice()
+			p.Limits = map[string]interface{}{"context_window": -1}
+			return p
+		}(), true},
+		{"negative limit float64", func() *ModelPrice {
+			p := validModelPrice()
+			p.Limits = map[string]interface{}{"context_window": float64(-1)}
+			return p
+		}(), true},
+		{"non-integer limit", func() *ModelPrice {
+			p := validModelPrice()
+			p.Limits = map[string]interface{}{"context_window": 1.5}
+			return p
+		}(), true},
+		{"non-numeric limit", func() *ModelPrice {
+			p := validModelPrice()
+			p.Limits = map[string]interface{}{"context_window": "abc"}
+			return p
+		}(), true},
+		{"valid zero limit", func() *ModelPrice {
+			p := validModelPrice()
+			p.Limits = map[string]interface{}{"context_window": 0}
+			return p
+		}(), false},
+		{"valid positive limit", func() *ModelPrice {
+			p := validModelPrice()
+			p.Limits = map[string]interface{}{"context_window": 128000}
+			return p
+		}(), false},
+		{"valid positive limit float64", func() *ModelPrice {
+			p := validModelPrice()
+			p.Limits = map[string]interface{}{"context_window": float64(128000)}
+			return p
+		}(), false},
+		{"invalid metadata key", func() *ModelPrice {
+			p := validModelPrice()
+			p.Metadata = map[string]interface{}{"unknown": 1}
+			return p
+		}(), true},
 		{"valid tier prices", func() *ModelPrice {
 			p := validModelPrice()
 			p.TierPrices = TierPriceMap{
@@ -128,6 +160,40 @@ func TestValidateModelPrice(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestValidateModelPriceNewPriceKeys verifies the price keys newly added to
+// ValidPriceKeys pass validation (including checkPricePrecision on
+// normal-range values), while unknown length-tier keys are still rejected.
+func TestValidateModelPriceNewPriceKeys(t *testing.T) {
+	newKeys := []string{
+		"input_cost_per_image_token",
+		"input_cost_per_audio_token",
+		"output_cost_per_audio_token",
+		"cache_creation_input_token_cost_1h",
+		"input_cost_per_token_above_256k_tokens",
+		"output_cost_per_token_above_256k_tokens",
+		"input_cost_per_token_above_272k_tokens",
+		"output_cost_per_token_above_272k_tokens",
+		"input_cost_per_token_above_512k_tokens",
+		"output_cost_per_token_above_512k_tokens",
+	}
+	for _, key := range newKeys {
+		t.Run("valid "+key, func(t *testing.T) {
+			p := validModelPrice()
+			p.Prices = PriceMap{key: 0.0001}
+			assert.NoError(t, ValidateModelPrice(p))
+
+			p.TierPrices = TierPriceMap{"peak": {key: 0.0001}}
+			assert.NoError(t, ValidateModelPrice(p))
+		})
+	}
+
+	t.Run("invalid unknown length tier key", func(t *testing.T) {
+		p := validModelPrice()
+		p.Prices = PriceMap{"input_cost_per_token_above_999k_tokens": 0.0001}
+		assert.Error(t, ValidateModelPrice(p))
+	})
 }
 
 func TestValidateImportFile(t *testing.T) {

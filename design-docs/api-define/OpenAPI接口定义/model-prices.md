@@ -139,14 +139,24 @@
 | `input_cost_per_token` | 每 Token 输入成本 |
 | `output_cost_per_token` | 每 Token 输出成本 |
 | `cache_read_input_token_cost` | 缓存读取输入 Token 成本 |
-| `cache_creation_input_token_cost` | 缓存创建输入 Token 成本 |
+| `cache_creation_input_token_cost` | 缓存创建输入 Token 成本（5m TTL） |
+| `cache_creation_input_token_cost_1h` | 缓存创建输入 Token 成本（1h TTL） |
 | `input_cost_per_token_above_200k_tokens` | 超过 200k Token 的输入成本 |
 | `output_cost_per_token_above_200k_tokens` | 超过 200k Token 的输出成本 |
+| `input_cost_per_token_above_256k_tokens` | 超过 256k Token 的输入成本 |
+| `output_cost_per_token_above_256k_tokens` | 超过 256k Token 的输出成本 |
+| `input_cost_per_token_above_272k_tokens` | 超过 272k Token 的输入成本 |
+| `output_cost_per_token_above_272k_tokens` | 超过 272k Token 的输出成本 |
+| `input_cost_per_token_above_512k_tokens` | 超过 512k Token 的输入成本 |
+| `output_cost_per_token_above_512k_tokens` | 超过 512k Token 的输出成本 |
 | `output_cost_per_image` | 每张输出图像成本 |
+| `input_cost_per_image_token` | 每图像输入 Token 成本 |
 | `output_cost_per_pixel` | 每像素输出成本 |
 | `output_cost_per_image_low_quality` | 低质量输出图像成本 |
 | `output_cost_per_image_high_quality` | 高质量输出图像成本 |
 | `input_cost_per_audio_per_second` | 每秒音频输入成本 |
+| `input_cost_per_audio_token` | 每音频输入 Token 成本 |
+| `output_cost_per_audio_token` | 每音频输出 Token 成本 |
 | `input_cost_per_video_per_second` | 每秒视频输入成本 |
 | `output_cost_per_second` | 每秒输出成本 |
 | `input_cost_per_query` | 每次查询输入成本 |
