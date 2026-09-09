@@ -195,6 +195,15 @@ type RouteRuleManager struct {
 	modelPriceStorager    imodel_price.ModelPriceStorager
 	providerStorager      iprovider.ProviderStorager
 	operationLogManager   ioperlog.OperationLogRecorder
+	eppAssignmentResolver icluster_conf.EPPAssignmentResolver
+}
+
+// SetEPPAssignmentResolver sets the optional resolver used to generate
+// assignment-driven ordered EPPAddr entries when exporting cluster conf.
+// Clusters in EPP mode without a valid assignment degrade to WRR export
+// with an error-level log (design-changes.md §4.3).
+func (rm *RouteRuleManager) SetEPPAssignmentResolver(resolver icluster_conf.EPPAssignmentResolver) {
+	rm.eppAssignmentResolver = resolver
 }
 
 // SetModelPriceStorager sets the optional model price storager used to enrich

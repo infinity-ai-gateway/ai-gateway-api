@@ -38,6 +38,7 @@ import (
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib"
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xerror"
+	"github.com/rainway-ai-gateway/ai-gateway-api/model/epp_pool"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/ibasic"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/imodel_price"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/ioperlog"
@@ -143,6 +144,14 @@ type ClusterParam struct {
 	PassiveHealthCheck *ClusterPassiveHealthCheckParam
 
 	LLMConfig *LLMConfig
+
+	// BalanceMode is the explicit cluster balance mode (WRR default, EPP
+	// optional); it is the single source of truth for the export BalanceMode.
+	BalanceMode *string
+	// EppConfig is the raw JSON of the simplified per-cluster EPP scheduling
+	// configuration (user shape, unset keys not persisted). Non-empty values
+	// are validated regardless of BalanceMode; required when BalanceMode=EPP.
+	EppConfig *string
 
 	// InstancePool auto-creates instance-pool and sub-cluster from these instances
 	InstancePool []Instance
@@ -281,6 +290,14 @@ type Cluster struct {
 	Scheduler          map[string]map[string]int
 	PassiveHealthCheck *ClusterPassiveHealthCheck
 	LLMConfig          *LLMConfig
+
+	// BalanceMode is the explicit balance mode read from clusters.balance_mode
+	// (empty means the WRR column default). It replaces the removed SubCluster
+	// pool Role derivation as the single EPP-mode decision source.
+	BalanceMode string
+	// EppConfig is the raw JSON of the simplified EPP scheduling configuration
+	// (empty means unset). Stored verbatim so GET round-trips the written value.
+	EppConfig string
 }
 
 func (cluster *Cluster) SubClusterNames() []string {
@@ -293,12 +310,12 @@ func (cluster *Cluster) SubClusterNames() []string {
 }
 
 func (cluster *Cluster) getBalanceMode() string {
-	for _, sc := range cluster.SubClusters {
-		if sc.Role == ProductPoolRoleEPP {
-			return "EPP"
-		}
+	// balance_mode is the single source of truth for the EPP decision; the
+	// empty value falls back to the WRR column default (design-changes.md §2.1).
+	if cluster.BalanceMode == "" {
+		return BalanceModeWRR
 	}
-	return "WRR"
+	return cluster.BalanceMode
 }
 
 func ClusterList2MapByName(list []*Cluster) map[string]*Cluster {
@@ -366,6 +383,7 @@ type ClusterManager struct {
 
 	versionControlManager *iversion_control.VersionControlManager
 	operationLogManager   ioperlog.OperationLogRecorder
+	eppPoolManager        *epp_pool.EppPoolManager
 
 	deleteCheckers map[string]func(context.Context, *ibasic.Product, *Cluster) error
 	updateCheckers map[string]func(context.Context, *ibasic.Product, *Cluster, *ClusterParam) error
@@ -374,6 +392,13 @@ type ClusterManager struct {
 // SetOperationLogManager injects the operation log recorder.
 func (cm *ClusterManager) SetOperationLogManager(manager ioperlog.OperationLogRecorder) {
 	cm.operationLogManager = manager
+}
+
+// SetEppPoolManager injects the EPP pool manager used to trigger assignments
+// for EPP-mode clusters (create / WRR->EPP update). Assignment failures never
+// block cluster writes; the periodic reconciler converges (design-changes.md §2.3).
+func (cm *ClusterManager) SetEppPoolManager(manager *epp_pool.EppPoolManager) {
+	cm.eppPoolManager = manager
 }
 
 func (rm *ClusterManager) FetchClusterList(ctx context.Context, param *ClusterFilter) (list []*Cluster, err error) {
@@ -400,6 +425,17 @@ func (cm *ClusterManager) FetchCluster(ctx context.Context, param *ClusterFilter
 
 func (cm *ClusterManager) CreateCluster(ctx context.Context, product *ibasic.Product, param *ClusterParam) (err error) {
 	param.ProductID = &product.ID
+
+	balanceMode, eppConfigRaw, err := validateClusterBalanceConfig(param.BalanceMode, "", param.EppConfig, "")
+	if err != nil {
+		return err
+	}
+	if param.BalanceMode != nil {
+		*param.BalanceMode = balanceMode
+	}
+	if param.EppConfig != nil {
+		*param.EppConfig = eppConfigRaw
+	}
 
 	var clusterID int64
 	err = cm.txn.AtomExecute(ctx, func(ctx context.Context) error {
@@ -444,10 +480,20 @@ func (cm *ClusterManager) CreateCluster(ctx context.Context, product *ibasic.Pro
 				return xerror.WrapRecordExisted()
 			}
 
+			// balance_mode=EPP creates a Role=EPP pool that still carries the
+			// provider instance list, so cluster_table export has RS entries for
+			// EPP backend discovery and BFE local fallback (design-changes.md §2.3);
+			// WRR keeps the same provider-snapshot path.
+			poolRole := ProductPoolRoleCommon
+			if balanceMode == BalanceModeEPP {
+				poolRole = ProductPoolRoleEPP
+			}
+			poolInstances := providerInstancesToClusterInstances(provider.InstancePool)
+
 			pool, err := cm.poolStorager.CreatePool(ctx, product, &PoolParam{
 				Name:      &poolName,
-				Instances: providerInstancesToClusterInstances(provider.InstancePool),
-				Role:      lib.PString(ProductPoolRoleCommon),
+				Instances: poolInstances,
+				Role:      lib.PString(poolRole),
 				Tag:       &PoolTagProduct,
 			})
 			if err != nil {
@@ -537,6 +583,13 @@ func (cm *ClusterManager) CreateCluster(ctx context.Context, product *ibasic.Pro
 	}
 
 	cm.recordClusterOperation(ctx, string(ioperlog.ActionCreate), clusterID, clusterName, nil, clusterParamToMap(param), nil)
+
+	// Trigger the EPP assignment after a successful create; a failure here is
+	// logged, not propagated (reconciler convergence, design-changes.md §2.3).
+	if balanceMode == BalanceModeEPP {
+		cm.assignClusterToEPP(ctx, clusterName)
+	}
+
 	return nil
 }
 
@@ -696,6 +749,19 @@ func (cm *ClusterManager) checkBindingSubClusters(ctx context.Context, cluster *
 func (cm *ClusterManager) UpdateCluster(ctx context.Context, product *ibasic.Product, oldData *Cluster,
 	param *ClusterParam) (err error) {
 
+	oldBalanceMode := oldData.getBalanceMode()
+	balanceMode, eppConfigRaw, err := validateClusterBalanceConfig(param.BalanceMode, oldBalanceMode, param.EppConfig, oldData.EppConfig)
+	if err != nil {
+		cm.recordClusterOperation(ctx, string(ioperlog.ActionUpdate), oldData.ID, oldData.Name, clusterToMap(oldData), clusterParamToMap(param), err)
+		return err
+	}
+	if param.BalanceMode != nil {
+		*param.BalanceMode = balanceMode
+	}
+	if param.EppConfig != nil {
+		*param.EppConfig = eppConfigRaw
+	}
+
 	err = cm.txn.AtomExecute(ctx, func(ctx context.Context) error {
 		// Validate and sync provider changes.
 		if param.LLMConfig != nil && param.LLMConfig.Provider != nil && *param.LLMConfig.Provider != "" {
@@ -762,6 +828,14 @@ func (cm *ClusterManager) UpdateCluster(ctx context.Context, product *ibasic.Pro
 	}
 
 	cm.recordClusterOperation(ctx, string(ioperlog.ActionUpdate), oldData.ID, oldData.Name, clusterToMap(oldData), clusterParamToMap(param), nil)
+
+	// WRR -> EPP triggers the assignment after a successful write; a failure
+	// here is logged, not propagated (reconciler convergence). EPP -> WRR keeps
+	// the stored epp_config and the assignment dormant (design-changes.md §2.3).
+	if oldBalanceMode != BalanceModeEPP && balanceMode == BalanceModeEPP {
+		cm.assignClusterToEPP(ctx, oldData.Name)
+	}
+
 	return nil
 }
 
@@ -851,9 +925,13 @@ func (cm *ClusterManager) ProviderInstancePoolSyncer(ctx context.Context,
 		}
 
 		for _, sc := range cluster.SubClusters {
-			if sc.InstancePool == nil || sc.Role == ProductPoolRoleEPP {
+			if sc.InstancePool == nil {
 				continue
 			}
+			// EPP-role pools are synced as well: they carry the provider
+			// instance snapshot for EPP backend discovery and BFE local
+			// fallback, so instance_pool changes (e.g. weight=0 drain) must
+			// reach them too (same rationale as the creation path).
 			if err := cm.poolStorager.UpdatePool(ctx, sc.InstancePool, &PoolParam{
 				Instances: newInstances,
 			}); err != nil {
@@ -1126,11 +1204,12 @@ type ProviderPricingInfo struct {
 	Tiers    []cluster_conf.PriceTier
 }
 
-func NewBfeClusterConf(version string, clusters []*Cluster,
+func NewBfeClusterConf(ctx context.Context, version string, clusters []*Cluster,
 	providerModelTable map[string][]*imodel_price.ModelPrice,
 	providerKeyTable map[string][]iprovider.ProviderKey,
 	providerProtocolTable map[string][]string,
-	providerPricingTable map[string]ProviderPricingInfo) *cluster_conf.BfeClusterConf {
+	providerPricingTable map[string]ProviderPricingInfo,
+	eppResolver EPPAssignmentResolver) *cluster_conf.BfeClusterConf {
 	clusterConfMap := cluster_conf.ClusterToConf{}
 
 	int322intp := func(i int32) *int {
@@ -1180,8 +1259,17 @@ func NewBfeClusterConf(version string, clusters []*Cluster,
 			},
 		}
 
-		if clusterConf.GslbBasic.BalanceMode != nil && *clusterConf.GslbBasic.BalanceMode == ProductPoolRoleEPP {
-			clusterConf.GslbBasic.EPPAddr = buildEPPAddrsFromSubClusters(cluster.SubClusters)
+		if balanceMode := cluster.getBalanceMode(); balanceMode == BalanceModeEPP {
+			// EPPAddr is assignment-driven ([0]=primary, [1]=standby). Without a
+			// valid assignment the cluster degrades to WRR without EPPAddr and an
+			// error-level log is emitted; the rest of the export is unaffected
+			// (design-changes.md §4.3).
+			if addrs, ok := fetchEPPAssignmentAddrs(ctx, eppResolver, cluster.Name); ok {
+				clusterConf.GslbBasic.BalanceMode = lib.PString(BalanceModeEPP)
+				clusterConf.GslbBasic.EPPAddr = &addrs
+			} else {
+				clusterConf.GslbBasic.BalanceMode = lib.PString(BalanceModeWRR)
+			}
 		}
 
 		if cluster.Basic.Protocol != nil && *cluster.Basic.Protocol == "https" {
@@ -1357,39 +1445,4 @@ func isDomainPool(subClusters []*SubCluster) bool {
 	}
 
 	return false
-}
-
-func buildEPPAddrsFromSubClusters(subClusters []*SubCluster) *[]string {
-	if len(subClusters) == 0 || subClusters[0] == nil || subClusters[0].InstancePool == nil {
-		return nil
-	}
-
-	eppServer := subClusters[0].InstancePool.EPPServer
-	if eppServer == nil {
-		return nil
-	}
-
-	// Prefer domain+port mode; fallback to endpoints mode.
-	if eppServer.Domain != nil && *eppServer.Domain != "" && eppServer.Port != nil && *eppServer.Port > 0 {
-		addrs := []string{fmt.Sprintf("%s:%d", *eppServer.Domain, *eppServer.Port)}
-		return &addrs
-	}
-
-	addrs := make([]string, 0, len(eppServer.Endpoints))
-	for _, endpoint := range eppServer.Endpoints {
-		if endpoint == nil || endpoint.IP == nil || endpoint.Port == nil {
-			continue
-		}
-		if *endpoint.IP == "" || *endpoint.Port <= 0 {
-			continue
-		}
-
-		addrs = append(addrs, fmt.Sprintf("%s:%d", *endpoint.IP, *endpoint.Port))
-	}
-
-	if len(addrs) == 0 {
-		return nil
-	}
-
-	return &addrs
 }

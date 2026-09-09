@@ -508,3 +508,14 @@ func (f *fakeQuotaBalanceStorager) DeleteQuotaBalance(ctx context.Context, quota
 }
 
 var fixedTestTime = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+type fakeEPPAssignmentResolver struct {
+	endpointsFn func(ctx context.Context, clusterName string) ([]string, bool, error)
+}
+
+func (f *fakeEPPAssignmentResolver) GetAssignmentEndpoints(ctx context.Context, clusterName string) ([]string, bool, error) {
+	if f.endpointsFn != nil {
+		return f.endpointsFn(ctx, clusterName)
+	}
+	return nil, false, nil
+}

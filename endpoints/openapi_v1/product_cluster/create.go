@@ -29,7 +29,9 @@
 package product_cluster
 
 import (
+	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib"
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib/validate"
@@ -57,6 +59,8 @@ type UpsertParam struct {
 	StickySessions     *StickySessionsParam     `json:"sticky_sessions"`
 	PassiveHealthCheck *PassiveHealthCheckParam `json:"passive_health_check"`
 	LLMConfig          *icluster_conf.LLMConfig `json:"llm_config"`
+	BalanceMode        *string                  `json:"balance_mode"`
+	EppConfig          *json.RawMessage         `json:"epp_config"`
 }
 
 // ConnectionParam Request Param
@@ -173,6 +177,8 @@ func clusterParamControlModel(param *UpsertParam) *icluster_conf.ClusterParam {
 		Name:        param.Name,
 		Description: param.Description,
 		LLMConfig:   normalizeLLMConfig(param.LLMConfig),
+		BalanceMode: param.BalanceMode,
+		EppConfig:   normalizeEppConfigRaw(param.EppConfig),
 	}
 
 	basic := normalizeBasic(param.Basic)
@@ -319,6 +325,20 @@ func normalizePassiveHealthCheck(phc *PassiveHealthCheckParam) *PassiveHealthChe
 		phc.Host = &empty
 	}
 	return phc
+}
+
+// normalizeEppConfigRaw converts the raw epp_config JSON body into the raw
+// JSON string pointer expected by the model layer. Absent or explicit null
+// stays nil (field not carried, stored value retained on update).
+func normalizeEppConfigRaw(raw *json.RawMessage) *string {
+	if raw == nil {
+		return nil
+	}
+	s := strings.TrimSpace(string(*raw))
+	if s == "" || s == "null" {
+		return nil
+	}
+	return &s
 }
 
 func normalizeLLMConfig(llm *icluster_conf.LLMConfig) *icluster_conf.LLMConfig {

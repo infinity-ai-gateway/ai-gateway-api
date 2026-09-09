@@ -88,11 +88,38 @@ CREATE TABLE `clusters` (
   `failure_status` tinyint(1) NOT NULL DEFAULT '0',
   `max_conns_per_host` int(11) NOT NULL DEFAULT '0',
   `llm_config` text,
+  `balance_mode` varchar(16) NOT NULL DEFAULT 'WRR' COMMENT '均衡模式：WRR/EPP',
+  `epp_config` text COMMENT 'EPP调度配置（简化用户形态JSON）',
   `created_at` datetime NOT NULL,
   `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `name_index` (`name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+
+-- create epp_instances (EPP实例池表)
+DROP TABLE IF EXISTS `epp_instances`;
+CREATE TABLE `epp_instances` (
+  `id` varchar(128) NOT NULL COMMENT '实例id，池内全局唯一',
+  `host` varchar(255) NOT NULL COMMENT '实例主机名或IP（IPv6字面量不带括号）',
+  `port` int(11) NOT NULL COMMENT '实例端口',
+  `group_name` varchar(128) NOT NULL COMMENT '实例组名',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_host_port` (`host`, `port`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='EPP实例池表';
+
+-- create epp_assignments (EPP分配表，只存主)
+DROP TABLE IF EXISTS `epp_assignments`;
+CREATE TABLE `epp_assignments` (
+  `cluster` varchar(255) NOT NULL COMMENT 'cluster名',
+  `group_name` varchar(128) NOT NULL COMMENT '实例组名',
+  `primary_instance_id` varchar(128) NOT NULL COMMENT '主实例id',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`cluster`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='EPP分配表';
 
 
 -- create lb_matrices

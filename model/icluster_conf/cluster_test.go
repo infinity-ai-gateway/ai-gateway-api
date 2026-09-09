@@ -113,7 +113,7 @@ func TestClusterManager_ProviderInstancePoolSyncer(t *testing.T) {
 		assert.Equal(t, "5.6.7.8_443", updatedPools[1][0].Name)
 	})
 
-	t.Run("skips EPP sub-clusters", func(t *testing.T) {
+	t.Run("syncs EPP sub-clusters", func(t *testing.T) {
 		updatedPools := map[int64][]Instance{}
 		clusterStorager := &fakeClusterStorager{
 			fetchClusterListFn: func(ctx context.Context, param *ClusterFilter) ([]*Cluster, error) {
@@ -140,7 +140,9 @@ func TestClusterManager_ProviderInstancePoolSyncer(t *testing.T) {
 		}
 		err := cm.ProviderInstancePoolSyncer(ctx, nil, newProvider)
 		require.NoError(t, err)
-		assert.Empty(t, updatedPools)
+		require.Len(t, updatedPools, 1)
+		require.Contains(t, updatedPools, int64(1))
+		assert.Equal(t, "5.6.7.8_443", updatedPools[1][0].Name)
 	})
 
 	t.Run("propagates update pool error", func(t *testing.T) {
@@ -413,11 +415,8 @@ func newTestClusterBase() *Cluster {
 
 func newTestClusterEPP() *Cluster {
 	c := newTestClusterBase()
-	c.SubClusters[0].Role = ProductPoolRoleEPP
-	c.SubClusters[0].InstancePool.EPPServer = &EPPServer{
-		Domain: lib.PString("epp.example.com"),
-		Port:   lib.PInt(8080),
-	}
+	c.BalanceMode = BalanceModeEPP
+	c.EppConfig = `{"scheduling_profile":"balanced"}`
 	return c
 }
 
@@ -469,14 +468,25 @@ func TestCluster_SubClusterNames(t *testing.T) {
 }
 
 func TestCluster_getBalanceMode(t *testing.T) {
-	t.Run("WRR", func(t *testing.T) {
+	t.Run("default WRR when unset", func(t *testing.T) {
 		c := newTestClusterBase()
-		assert.Equal(t, "WRR", c.getBalanceMode())
+		assert.Equal(t, BalanceModeWRR, c.getBalanceMode())
+	})
+	t.Run("explicit WRR", func(t *testing.T) {
+		c := newTestClusterBase()
+		c.BalanceMode = BalanceModeWRR
+		assert.Equal(t, BalanceModeWRR, c.getBalanceMode())
 	})
 
 	t.Run("EPP", func(t *testing.T) {
 		c := newTestClusterEPP()
-		assert.Equal(t, "EPP", c.getBalanceMode())
+		assert.Equal(t, BalanceModeEPP, c.getBalanceMode())
+	})
+
+	t.Run("SubCluster Role no longer derives balance mode", func(t *testing.T) {
+		c := newTestClusterBase()
+		c.SubClusters[0].Role = ProductPoolRoleEPP
+		assert.Equal(t, BalanceModeWRR, c.getBalanceMode())
 	})
 }
 
@@ -921,6 +931,7 @@ func TestClusterManager_UpdateCluster(t *testing.T) {
 
 	t.Run("EPP count invalid", func(t *testing.T) {
 		c := newTestClusterEPP()
+		c.SubClusters[0].Role = ProductPoolRoleEPP
 		c.SubClusters = append(c.SubClusters, &SubCluster{ID: 2, Name: "sc2", Role: ProductPoolRoleEPP})
 		m := NewClusterManager(&fakeTxn{}, &fakeClusterStorager{}, &fakeSubClusterStorager{}, &fakeBFEClusterStorager{}, &fakePoolStorager{}, nil, nil, nil, nil)
 		err := m.UpdateCluster(ctx, product, c, &ClusterParam{Name: lib.PString("c1")})
@@ -1089,7 +1100,7 @@ func TestAppendAdvancedRuleCluster(t *testing.T) {
 
 func TestNewBfeClusterConf(t *testing.T) {
 	t.Run("basic", func(t *testing.T) {
-		conf := NewBfeClusterConf("v1", []*Cluster{newTestClusterBase()}, nil, nil, nil, nil)
+		conf := NewBfeClusterConf(context.Background(), "v1", []*Cluster{newTestClusterBase()}, nil, nil, nil, nil, nil)
 		require.NotNil(t, conf)
 		require.NotNil(t, conf.Config)
 		assert.Equal(t, "v1", *conf.Version)
@@ -1102,29 +1113,83 @@ func TestNewBfeClusterConf(t *testing.T) {
 	})
 
 	t.Run("skip system route", func(t *testing.T) {
-		conf := NewBfeClusterConf("v1", []*Cluster{
+		conf := NewBfeClusterConf(context.Background(), "v1", []*Cluster{
 			newTestClusterBase(),
 			{ID: RouteAdvancedModeClusterID, Name: RouteAdvancedModeClusterName},
-		}, nil, nil, nil, nil)
+		}, nil, nil, nil, nil, nil)
 		require.Len(t, *conf.Config, 1)
 	})
 
-	t.Run("EPP addrs", func(t *testing.T) {
-		conf := NewBfeClusterConf("v1", []*Cluster{newTestClusterEPP()}, nil, nil, nil, nil)
+	t.Run("EPP addrs from assignment", func(t *testing.T) {
+		resolver := &fakeEPPAssignmentResolver{
+			endpointsFn: func(ctx context.Context, clusterName string) ([]string, bool, error) {
+				return []string{"10.0.0.1:9002", "10.0.0.2:9002"}, true, nil
+			},
+		}
+		conf := NewBfeClusterConf(context.Background(), "v1", []*Cluster{newTestClusterEPP()}, nil, nil, nil, nil, resolver)
 		cConf := (*conf.Config)["c1"]
 		require.NotNil(t, cConf.GslbBasic.EPPAddr)
-		assert.Equal(t, []string{"epp.example.com:8080"}, *cConf.GslbBasic.EPPAddr)
+		assert.Equal(t, []string{"10.0.0.1:9002", "10.0.0.2:9002"}, *cConf.GslbBasic.EPPAddr)
+		require.NotNil(t, cConf.GslbBasic.BalanceMode)
+		assert.Equal(t, BalanceModeEPP, *cConf.GslbBasic.BalanceMode)
+	})
+
+	t.Run("EPP without assignment degrades to WRR", func(t *testing.T) {
+		resolver := &fakeEPPAssignmentResolver{
+			endpointsFn: func(ctx context.Context, clusterName string) ([]string, bool, error) {
+				return nil, false, nil
+			},
+		}
+		conf := NewBfeClusterConf(context.Background(), "v1", []*Cluster{newTestClusterEPP()}, nil, nil, nil, nil, resolver)
+		cConf := (*conf.Config)["c1"]
+		assert.Nil(t, cConf.GslbBasic.EPPAddr)
+		require.NotNil(t, cConf.GslbBasic.BalanceMode)
+		assert.Equal(t, BalanceModeWRR, *cConf.GslbBasic.BalanceMode)
+	})
+
+	t.Run("EPP assignment lookup error degrades to WRR", func(t *testing.T) {
+		resolver := &fakeEPPAssignmentResolver{
+			endpointsFn: func(ctx context.Context, clusterName string) ([]string, bool, error) {
+				return nil, false, errors.New("db down")
+			},
+		}
+		conf := NewBfeClusterConf(context.Background(), "v1", []*Cluster{newTestClusterEPP()}, nil, nil, nil, nil, resolver)
+		cConf := (*conf.Config)["c1"]
+		assert.Nil(t, cConf.GslbBasic.EPPAddr)
+		require.NotNil(t, cConf.GslbBasic.BalanceMode)
+		assert.Equal(t, BalanceModeWRR, *cConf.GslbBasic.BalanceMode)
+	})
+
+	t.Run("EPP without resolver degrades to WRR", func(t *testing.T) {
+		conf := NewBfeClusterConf(context.Background(), "v1", []*Cluster{newTestClusterEPP()}, nil, nil, nil, nil, nil)
+		cConf := (*conf.Config)["c1"]
+		assert.Nil(t, cConf.GslbBasic.EPPAddr)
+		require.NotNil(t, cConf.GslbBasic.BalanceMode)
+		assert.Equal(t, BalanceModeWRR, *cConf.GslbBasic.BalanceMode)
+	})
+
+	t.Run("WRR cluster never exports EPPAddr even when assigned", func(t *testing.T) {
+		resolver := &fakeEPPAssignmentResolver{
+			endpointsFn: func(ctx context.Context, clusterName string) ([]string, bool, error) {
+				return []string{"10.0.0.1:9002"}, true, nil
+			},
+		}
+		conf := NewBfeClusterConf(context.Background(), "v1", []*Cluster{newTestClusterBase()}, nil, nil, nil, nil, resolver)
+		cConf := (*conf.Config)["c1"]
+		assert.Nil(t, cConf.GslbBasic.EPPAddr)
+		require.NotNil(t, cConf.GslbBasic.BalanceMode)
+		assert.Equal(t, BalanceModeWRR, *cConf.GslbBasic.BalanceMode)
 	})
 
 	t.Run("https conf", func(t *testing.T) {
-		conf := NewBfeClusterConf("v1", []*Cluster{newTestClusterHTTPS()}, nil, nil, nil, nil)
+		conf := NewBfeClusterConf(context.Background(), "v1", []*Cluster{newTestClusterHTTPS()}, nil, nil, nil, nil, nil)
 		cConf := (*conf.Config)["c1"]
 		require.NotNil(t, cConf.HTTPSConf)
 		assert.True(t, *cConf.HTTPSConf.RSInsecureSkipVerify)
 	})
 
 	t.Run("domain pool disable checks", func(t *testing.T) {
-		conf := NewBfeClusterConf("v1", []*Cluster{newTestClusterDomain()}, nil, nil, nil, nil)
+		conf := NewBfeClusterConf(context.Background(), "v1", []*Cluster{newTestClusterDomain()}, nil, nil, nil, nil, nil)
 		cConf := (*conf.Config)["c1"]
 		assert.True(t, *cConf.ClusterBasic.DisableHealthCheck)
 		assert.True(t, *cConf.ClusterBasic.DisableHostHeader)
@@ -1140,7 +1205,7 @@ func TestNewBfeClusterConf(t *testing.T) {
 		providerProtocolTable := map[string][]string{
 			"openai": {"openai"},
 		}
-		conf := NewBfeClusterConf("v1", []*Cluster{newTestClusterLLM()}, nil, providerKeyTable, providerProtocolTable, nil)
+		conf := NewBfeClusterConf(context.Background(), "v1", []*Cluster{newTestClusterLLM()}, nil, providerKeyTable, providerProtocolTable, nil, nil)
 		cConf := (*conf.Config)["c1"]
 		require.NotNil(t, cConf.AIConf)
 		require.Len(t, cConf.AIConf.Keys, 2)
@@ -1205,7 +1270,7 @@ func TestNewBfeClusterConf(t *testing.T) {
 		}
 		c := newTestClusterLLM()
 		c.LLMConfig.Provider = lib.PString("deepseek")
-		conf := NewBfeClusterConf("v1", []*Cluster{c}, providerModelTable, nil, nil, providerPricingTable)
+		conf := NewBfeClusterConf(context.Background(), "v1", []*Cluster{c}, providerModelTable, nil, nil, providerPricingTable, nil)
 		cConf := (*conf.Config)["c1"]
 		require.NotNil(t, cConf.AIConf)
 		require.NotNil(t, cConf.AIConf.ModelTable)
@@ -1227,7 +1292,7 @@ func TestNewBfeClusterConf(t *testing.T) {
 			HashStrategy:  ClusterHashStrategyClientIDOnlyI,
 			HashHeader:    "",
 		}
-		conf := NewBfeClusterConf("v1", []*Cluster{c}, nil, nil, nil, nil)
+		conf := NewBfeClusterConf(context.Background(), "v1", []*Cluster{c}, nil, nil, nil, nil, nil)
 		cConf := (*conf.Config)["c1"]
 		require.NotNil(t, cConf.GslbBasic)
 		require.NotNil(t, cConf.GslbBasic.HashConf)
@@ -1304,30 +1369,6 @@ func TestIsDomainPool(t *testing.T) {
 
 	t.Run("domain", func(t *testing.T) {
 		assert.True(t, isDomainPool(newTestClusterDomain().SubClusters))
-	})
-}
-
-func TestBuildEPPAddrsFromSubClusters(t *testing.T) {
-	t.Run("domain mode", func(t *testing.T) {
-		got := buildEPPAddrsFromSubClusters(newTestClusterEPP().SubClusters)
-		require.NotNil(t, got)
-		assert.Equal(t, []string{"epp.example.com:8080"}, *got)
-	})
-
-	t.Run("endpoints mode", func(t *testing.T) {
-		c := newTestClusterEPP()
-		c.SubClusters[0].InstancePool.EPPServer = &EPPServer{
-			Endpoints: []*EPPEndpoint{
-				{IP: lib.PString("127.0.0.1"), Port: lib.PInt(9090)},
-			},
-		}
-		got := buildEPPAddrsFromSubClusters(c.SubClusters)
-		require.NotNil(t, got)
-		assert.Equal(t, []string{"127.0.0.1:9090"}, *got)
-	})
-
-	t.Run("empty", func(t *testing.T) {
-		assert.Nil(t, buildEPPAddrsFromSubClusters(nil))
 	})
 }
 

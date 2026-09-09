@@ -13,6 +13,7 @@
 | 7 | `/configs/mod-body-process` | 导出请求体处理配置 | `version` | [mod-body-process.md](./mod-body-process.md) |
 | 8 | `/configs/rate-limit-policy` | 导出限流策略配置 | `version` | [rate-limit-policy.md](./rate-limit-policy.md) |
 | 9 | `/configs/ai-route` | 导出 AI 路由配置 | `version` | [ai-route.md](./ai-route.md) |
+| 10 | `/configs/epp_data/config` | 导出 EPP 配置（epp_config + assignment 全量视图，合并单端点） | `version` | [epp-data.md](./epp-data.md) |
 
 ## 2. 特殊参数说明
 

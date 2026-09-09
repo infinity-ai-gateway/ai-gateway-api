@@ -69,9 +69,9 @@ var BasicSchema = &testutil.ObjectSchema{
 var StickySessionsSchema = &testutil.ObjectSchema{
 	Required: []string{"enabled", "hash_strategy", "hash_header"},
 	Fields: map[string]testutil.FieldSpec{
-		"enabled":      {Type: testutil.TypeBool},
-		"hash_strategy":{Type: testutil.TypeString},
-		"hash_header":  {Type: testutil.TypeString},
+		"enabled":       {Type: testutil.TypeBool},
+		"hash_strategy": {Type: testutil.TypeString},
+		"hash_header":   {Type: testutil.TypeString},
 	},
 }
 
@@ -148,13 +148,48 @@ var LLMConfigSchema = &testutil.ObjectSchema{
 	},
 }
 
+// EppConfigFlowControlSchema epp_config.flow_control schema
+// （clusters.md 表：epp_config.flow_control）
+var EppConfigFlowControlSchema = &testutil.ObjectSchema{
+	Optional: []string{"max_requests", "queue_ttl", "no_endpoint_queue_ttl", "enable_eviction"},
+	Fields: map[string]testutil.FieldSpec{
+		"max_requests":          {Type: testutil.TypeInt},
+		"queue_ttl":             {Type: testutil.TypeInt},
+		"no_endpoint_queue_ttl": {Type: testutil.TypeInt},
+		"enable_eviction":       {Type: testutil.TypeBool},
+	},
+}
+
+// EppConfigSchema 集群 epp_config（简化用户形态）schema。
+// 存储保留用户原始 JSON——未显式携带的字段不落盘，因此全部可选；
+// balance_mode=WRR 时 epp_config 可为 null（休眠保留），故 ClusterSchema 中设为 Optional。
+var EppConfigSchema = &testutil.ObjectSchema{
+	Optional: []string{
+		"scheduling_profile", "cache_affinity",
+		"prefix_cache_affinity", "session_affinity_enabled", "session_affinity_header",
+		"kv_cache_utilization_max", "flow_control",
+	},
+	Fields: map[string]testutil.FieldSpec{
+		"scheduling_profile": {Type: testutil.TypeString, Enum: []interface{}{"latency-first", "balanced", "throughput-first"}},
+		"cache_affinity":     {Type: testutil.TypeString, Enum: []interface{}{"low", "medium", "high"}},
+		"prefix_cache_affinity":    {Type: testutil.TypeBool},
+		"session_affinity_enabled": {Type: testutil.TypeBool},
+		"session_affinity_header":  {Type: testutil.TypeString},
+		"kv_cache_utilization_max": {Type: testutil.TypeNumber},
+		"flow_control":             {Type: testutil.TypeObject, Nested: EppConfigFlowControlSchema},
+	},
+}
+
 // ClusterSchema Cluster 数据模型 schema
 // 通过 /clusters 接口创建的集群 llm_config 必填。
+// balance_mode 必返回（缺省 WRR）；epp_config 未配置时为 null（Optional 允许 null）。
 var ClusterSchema = &testutil.ObjectSchema{
 	Required: []string{
 		"name", "description", "llm_config",
 		"basic", "sticky_sessions", "passive_health_check",
+		"balance_mode",
 	},
+	Optional: []string{"epp_config"},
 	Fields: map[string]testutil.FieldSpec{
 		"name":                 {Type: testutil.TypeString},
 		"description":          {Type: testutil.TypeString},
@@ -162,5 +197,7 @@ var ClusterSchema = &testutil.ObjectSchema{
 		"sticky_sessions":      {Type: testutil.TypeObject, Nested: StickySessionsSchema},
 		"passive_health_check": {Type: testutil.TypeObject, Nested: PassiveHealthCheckSchema},
 		"llm_config":           {Type: testutil.TypeObject, Nested: LLMConfigSchema},
+		"balance_mode":         {Type: testutil.TypeString, Enum: []interface{}{"WRR", "EPP"}},
+		"epp_config":           {Type: testutil.TypeObject, Nested: EppConfigSchema},
 	},
 }

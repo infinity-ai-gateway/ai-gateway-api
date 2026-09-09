@@ -88,12 +88,40 @@ CREATE TABLE clusters (
   failure_status INTEGER NOT NULL DEFAULT 0,
   max_conns_per_host INTEGER NOT NULL DEFAULT 0,
   llm_config TEXT,
+  balance_mode TEXT NOT NULL DEFAULT 'WRR',
+  epp_config TEXT,
   created_at DATETIME NOT NULL,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE (name)
 );
 CREATE TRIGGER clusters_updated_at AFTER UPDATE ON clusters
   FOR EACH ROW BEGIN UPDATE clusters SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id; END;
+
+-- create epp_instances
+DROP TABLE IF EXISTS epp_instances;
+CREATE TABLE epp_instances (
+  id TEXT NOT NULL PRIMARY KEY,
+  host TEXT NOT NULL,
+  port INTEGER NOT NULL,
+  group_name TEXT NOT NULL,
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (host, port)
+);
+CREATE TRIGGER epp_instances_update_time AFTER UPDATE ON epp_instances
+  FOR EACH ROW BEGIN UPDATE epp_instances SET update_time = CURRENT_TIMESTAMP WHERE id = OLD.id; END;
+
+-- create epp_assignments
+DROP TABLE IF EXISTS epp_assignments;
+CREATE TABLE epp_assignments (
+  cluster TEXT NOT NULL PRIMARY KEY,
+  group_name TEXT NOT NULL,
+  primary_instance_id TEXT NOT NULL,
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TRIGGER epp_assignments_update_time AFTER UPDATE ON epp_assignments
+  FOR EACH ROW BEGIN UPDATE epp_assignments SET update_time = CURRENT_TIMESTAMP WHERE cluster = OLD.cluster; END;
 
 -- create lb_matrices
 DROP TABLE IF EXISTS lb_matrices;

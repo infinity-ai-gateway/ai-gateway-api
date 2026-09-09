@@ -30,9 +30,11 @@ package rdb
 
 import (
 	"context"
+	"time"
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xreq"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/api_key"
+	"github.com/rainway-ai-gateway/ai-gateway-api/model/epp_pool"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/iai_route"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/iauth"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/ibasic"
@@ -64,6 +66,7 @@ import (
 	rateLimitPolicyStorage "github.com/rainway-ai-gateway/ai-gateway-api/storage/rdb/rate_limit_policy"
 	"github.com/rainway-ai-gateway/ai-gateway-api/storage/rdb/route_conf"
 	routeRulesStorage "github.com/rainway-ai-gateway/ai-gateway-api/storage/rdb/route_rules"
+	eppPoolStorage "github.com/rainway-ai-gateway/ai-gateway-api/storage/rdb/epp_pool"
 	"github.com/rainway-ai-gateway/ai-gateway-api/storage/rdb/txn"
 	"github.com/rainway-ai-gateway/ai-gateway-api/storage/rdb/version_control"
 
@@ -189,6 +192,24 @@ func Init() error {
 			"route_rules": container.RouteRulesManager.ClusterModelUpdateChecker,
 		})
 	container.ClusterManager.SetOperationLogManager(container.OperationLogManager)
+
+	// EPP pool manager: the cluster manager provides the EPPClusterSource
+	// (balance_mode=EPP clusters and their raw epp_config); ManagerOptions are
+	// read from the RunTime config. The reconciler lifecycle follows the
+	// process lifecycle like QuotaResetScheduler (design-changes.md §4.3).
+	container.EppPoolManager = epp_pool.NewEppPoolManager(
+		container.TxnStoragerSingleton,
+		eppPoolStorage.NewEppPoolStorager(stateful.NewBFEDBContext),
+		container.ClusterManager,
+		container.VersionControlManager,
+		&epp_pool.ManagerOptions{
+			PoolName:          stateful.DefaultConfig.RunTime.DefaultEPPInstancePoolName,
+			ValidationMode:    stateful.DefaultConfig.RunTime.EPPValidationMode,
+			ReconcileInterval: time.Duration(stateful.DefaultConfig.RunTime.EPPReconcileIntervalSeconds) * time.Second,
+		})
+	container.ClusterManager.SetEppPoolManager(container.EppPoolManager)
+	container.RouteRuleManager.SetEPPAssignmentResolver(container.EppPoolManager)
+	container.EppPoolManager.StartReconciler()
 
 	container.SubClusterManager = icluster_conf.NewSubClusterManager(
 		container.TxnStoragerSingleton,

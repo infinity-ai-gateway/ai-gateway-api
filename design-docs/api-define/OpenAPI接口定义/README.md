@@ -21,6 +21,8 @@
 | /certificates | [certificates.md](./certificates.md) |
 | /providers | [providers.md](./providers.md) |
 | /clusters | [clusters.md](./clusters.md) |
+| /epp-assignments | [epp-assignments.md](./epp-assignments.md) |
+| /epp-pool | [epp-pool.md](./epp-pool.md) |
 | /model-prices | [model-prices.md](./model-prices.md) |
 | /operation-logs | [operation-logs.md](./operation-logs.md) |
 | /expression/verify | [expression-verify.md](./expression-verify.md) |

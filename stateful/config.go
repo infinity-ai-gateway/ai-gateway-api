@@ -54,6 +54,11 @@ type RunTimeConfig struct {
 	AIRouteInnerProductName   string // AI inner product name,default AI_product
 	DefaultAIInstancePoolName string // default AI instance pool name, e.g. "BFE.aipool"
 	DefaultAIClusterName      string // default AI cluster name, e.g. "BFE-AI_product.szyf"
+
+	// EPP scheduling integration (see model/epp_pool).
+	DefaultEPPInstancePoolName  string // default EPP instance pool name, e.g. "EPP.pool"
+	EPPValidationMode           string // epp pool group size check: "production" (default, exactly 2 per group) / "test" (>=1)
+	EPPReconcileIntervalSeconds int    // assignment reconciler period in seconds, default 30
 }
 
 type Config struct {
