@@ -1,3 +1,17 @@
+// Copyright(c) 2026 The Rainway AI Gateway (壬远AI网关) Authors.
+//
+//Licensed under the Apache License, Version 2.0 (the "License");
+//you may not use this file except in compliance with the License.
+//You may obtain a copy of the License at
+//
+//http://www.apache.org/licenses/LICENSE-2.0
+//
+//Unless required by applicable law or agreed to in writing, software
+//distributed under the License is distributed on an "AS IS" BASIS,
+//WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//See the License for the specific language governing permissions and
+//limitations under the License.
+
 // Package innerapi 定义 InnerAPI v1 各接口返回值的 schema。
 // 由于 InnerAPI 大量字段为动态 key 的 map，本包优先校验顶层固定字段的类型，
 // 对动态 map 仅校验其为 object。
