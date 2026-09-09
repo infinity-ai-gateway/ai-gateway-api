@@ -1240,9 +1240,11 @@ func TestNewBfeClusterConf(t *testing.T) {
 					BaseModel: "deepseek-v4-pro",
 					Mode:      "chat",
 					Prices: imodel_price.PriceMap{
-						"input_cost_per_token":        0.0000045,
-						"output_cost_per_token":       0.0000135,
-						"cache_read_input_token_cost": 0.00000015,
+						"input_cost_per_token":                   0.0000045,
+						"output_cost_per_token":                  0.0000135,
+						"cache_read_input_token_cost":            0.00000015,
+						"cache_creation_input_token_cost_1h":     0.0000002,
+						"input_cost_per_token_above_256k_tokens": 0.000009,
 					},
 					TierPrices: imodel_price.TierPriceMap{
 						"peak": {
@@ -1283,6 +1285,8 @@ func TestNewBfeClusterConf(t *testing.T) {
 		assert.Equal(t, "deepseek-v4-pro", model.Model)
 		require.NotNil(t, model.TierPrices)
 		assert.Equal(t, 0.000009, model.TierPrices["peak"]["input_cost_per_token"])
+		assert.Equal(t, 0.0000002, model.Prices["cache_creation_input_token_cost_1h"])
+		assert.Equal(t, 0.000009, model.Prices["input_cost_per_token_above_256k_tokens"])
 	})
 
 	t.Run("disabled sticky sessions with empty hash_header falls back to CLIENT_IP_ONLY", func(t *testing.T) {
