@@ -54,7 +54,7 @@
 | `models` | []string | 该 provider 支持的模型列表 | - | 非必填；元素非空且不可重复；可通过模型发现接口自动填充 |
 | `keys` | []ProviderKey | 该 provider 可用的 API Key 明文 | - | 非必填；默认空数组 `[]`；元素须满足 表：ProviderKey 结构 |
 | `instance_pool` | []Instance | Provider 对应的后端实例池 | 系统自动据此创建实例池和子集群 | 必填；至少 1 个元素；同一 provider 内 `(addr, port)` 组合不能重复；至少有一个实例 `weight > 0` |
-| `model_protocols` | []string | 支持的模型访问协议 | 首期枚举：`openai`、`anthropic` | 必填；至少 1 个元素；元素不可重复；枚举值见下方 |
+| `model_protocols` | []string | 支持的模型访问协议 | 枚举：`openai`、`anthropic`、`gemini` | 必填；至少 1 个元素；元素不可重复；枚举值见下方 |
 | `time_zone` | string | 计算时段所使用的时区 | 用于 tier 价格匹配 | 非必填；默认 `Asia/Shanghai`；须为合法 IANA 时区名 |
 | `tiers` | []PricingTier | 时段 tier 定义列表 | 描述该 provider 在什么时段属于哪个 tier | 非必填；元素须满足 表：PricingTier 结构；**初期 `name` 只支持 `peak`** |
 | `create_time` | int64 | 创建时间 | - | 系统生成 |
@@ -87,7 +87,7 @@
 | schema| string |  请求协议 | N |  取值为 http、https；**默认值为 https** | 非必填；默认值为 `https`；有效值 `http`、`https` |
 | uri| string |  请求URI | N |  **默认值为 `/v1/models`** | 非必填；默认值为 `/v1/models`；非空；须以 `/` 开头 |
 
-> **说明**：不再允许配置 `headers.Authorization`。系统根据 `model_protocols` 自动决定调用模型发现接口时使用的认证头风格（如 `openai` 用 `Authorization: Bearer`，`anthropic` 用 `x-api-key`）。
+> **说明**：不再允许配置 `headers.Authorization`。系统根据 `model_protocols` 自动决定调用模型发现接口时使用的认证头风格（如 `openai` 用 `Authorization: Bearer`，`anthropic` 用 `x-api-key`，`gemini` 用 `x-goog-api-key`）。
 
 **表：ProviderKey 结构（`keys` 元素）**
 
@@ -104,12 +104,13 @@
 | weight | int | 实例权重，范围 [0,100] | Y | | 必填；取值范围 [0,100]；`0` 表示该实例不接收流量 |
 | port | int | 实例端口 | Y | | 必填；类型为 [Port](./00-common.md#3-网络端口port) |
 
-**`model_protocols` 枚举（首期）**
+**`model_protocols` 枚举**
 
 | 枚举值 | 说明 |
 |--------|------|
 | `openai` | OpenAI 兼容协议（含大多数国产兼容平台） |
 | `anthropic` | Anthropic Claude Messages API |
+| `gemini` | Google Gemini API（认证头 `x-goog-api-key`） |
 
 > 一个 provider 可同时支持多种协议（如聚合平台），但 `model_protocols` 至少包含一个。
 
@@ -398,21 +399,22 @@ Data 为 null。
 
 | 参数名 | 类型 | 参数含义 | 必填 | 补充描述 | 合法性条件 |
 | - | - | - | - | - | - |
-| model_protocol | string | 模型访问协议 | Y | - | 必填；枚举值：`openai`、`anthropic` |
+| model_protocol | string | 模型访问协议 | Y | - | 必填；枚举值：`openai`、`anthropic`、`gemini` |
 | schema | string | 请求协议 | Y | - | 必填；有效值 `http`、`https` |
 | addr | string | 目标实例地址 | Y | - | 必填；类型为 [Hostname](./00-common.md#1-主机名hostname) |
 | port | int | 目标实例端口 | Y | - | 必填；类型为 [Port](./00-common.md#3-网络端口port) |
-| `uri` | string | 模型列表接口 URI | N | 为空时默认使用 `/v1/models` | 非空时须以 `/` 开头 |
+| `uri` | string | 模型列表接口 URI | N | 为空时按协议取默认值：`openai`/`anthropic` 为 `/v1/models`，`gemini` 为 `/v1beta/models` | 非空时须以 `/` 开头 |
 | `apikey` | string | 调用模型列表接口的 API Key | N | - | 非空时长度 1-512 字符 |
 
 **执行逻辑**
 
-1. 若 `uri` 为空，默认使用 `/v1/models`；构造请求 URL：`{schema}://{addr}:{port}{uri}`。
+1. 若 `uri` 为空，按协议取默认值（`openai`/`anthropic` 为 `/v1/models`，`gemini` 为 `/v1beta/models`）；构造请求 URL：`{schema}://{addr}:{port}{uri}`。
 2. 若 `apikey` 非空，根据 `model_protocol` 生成认证头：
    - `openai`：`Authorization: Bearer {apikey}`
    - `anthropic`：`x-api-key: {apikey}`
+   - `gemini`：`x-goog-api-key: {apikey}`
 3. 携带认证头（若有）调用第三方模型列表接口。
-4. 根据 `model_protocol` 选择对应的响应解析器（如 `openai`、`anthropic`），提取模型名列表。
+4. 根据 `model_protocol` 选择对应的响应解析器（如 `openai`、`anthropic`、`gemini`），提取模型名列表。gemini 响应从 `models[].name` 提取并剥离 `models/` 前缀（如 `models/gemini-2.5-pro` → `gemini-2.5-pro`）。
 5. 返回模型名列表。
 
 > **说明**：本接口为无状态工具接口，不读写任何 Provider 资源；如需将发现结果回填到 Provider，调用方需再调用 `PATCH /providers/{provider_name}`。
@@ -582,7 +584,7 @@ tiers:
 7. `keys` 非必填，默认空数组 `[]`；若非空：
    - 每个元素 `name` 必填，长度 1-128，同一 provider 内唯一；
    - 每个元素 `key` 必填且非空，长度 1-512。
-8. `model_protocols` 必填，至少 1 个元素，元素不可重复，取值须为枚举值：`openai`、`anthropic`。
+8. `model_protocols` 必填，至少 1 个元素，元素不可重复，取值须为枚举值：`openai`、`anthropic`、`gemini`。
 9. `time_zone` 非必填，为空时默认 `Asia/Shanghai`；若传入，须为合法 IANA 时区名。
 10. `tiers` 非必填；若传入：
     - 每个 tier 必须包含非空 `name` 和至少一个 `time_range`；
