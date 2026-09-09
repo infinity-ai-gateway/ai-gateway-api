@@ -156,7 +156,7 @@ func (rm *RouteRuleManager) exportRouteRule(ctx context.Context) (*iversion_cont
 		Version:     emptyVersion,
 		RouteTable:  newRouteTableFile(emptyVersion, productMapID2Name, routeRules),
 		HostTable:   newHostTableConf(emptyVersion, productMapID2Name, domains),
-		ClusterConf: icluster_conf.NewBfeClusterConf(emptyVersion, clusters, providerModelTable, providerKeyTable, providerProtocolTable, providerPricingTable),
+		ClusterConf: icluster_conf.NewBfeClusterConf(ctx, emptyVersion, clusters, providerModelTable, providerKeyTable, providerProtocolTable, providerPricingTable, rm.eppAssignmentResolver),
 	}
 
 	return &iversion_control.ExportData{

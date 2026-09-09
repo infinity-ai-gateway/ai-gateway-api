@@ -58,6 +58,8 @@ type TCluster struct {
 	CancelOnClientClose    bool      `db:"cancel_on_client_close"`
 	FailureStatus          bool      `db:"failure_status"`
 	LLMConfig              string    `db:"llm_config"`
+	BalanceMode            string    `db:"balance_mode"`
+	EppConfig              string    `db:"epp_config"`
 	CreatedAt              time.Time `db:"created_at"`
 	UpdatedAt              time.Time `db:"updated_at"`
 }
@@ -127,6 +129,8 @@ type TClusterParam struct {
 	CancelOnClientClose    *bool      `db:"cancel_on_client_close"`
 	FailureStatus          *bool      `db:"failure_status"`
 	LLMConfig              *string    `db:"llm_config"`
+	BalanceMode            *string    `db:"balance_mode"`
+	EppConfig              *string    `db:"epp_config"`
 	CreatedAt              *time.Time `db:"created_at"`
 	UpdatedAt              *time.Time `db:"updated_at"`
 

@@ -167,3 +167,23 @@ var AIRouteSchema = &testutil.ObjectSchema{
 		"ApikeyRouteTableBindings": {Type: testutil.TypeObject},
 	},
 }
+
+// EppDataConfigBodySchema /configs/epp_data/config 返回 Config 段的 schema。
+// epp_config / assignment 均为 cluster 名动态 key 的 map（见 epp-data.md §3），
+// 按本包惯例仅校验为 object；条目级结构由测试中的定向断言覆盖。
+var EppDataConfigBodySchema = &testutil.ObjectSchema{
+	Required: []string{"epp_config", "assignment"},
+	Fields: map[string]testutil.FieldSpec{
+		"epp_config": {Type: testutil.TypeObject},
+		"assignment": {Type: testutil.TypeObject},
+	},
+}
+
+// EppDataSchema /configs/epp_data/config 返回 schema（epp-data.md §3.1）
+var EppDataSchema = &testutil.ObjectSchema{
+	Required: []string{"Version", "Config"},
+	Fields: map[string]testutil.FieldSpec{
+		"Version": {Type: testutil.TypeString},
+		"Config":  {Type: testutil.TypeObject, Nested: EppDataConfigBodySchema},
+	},
+}

@@ -117,6 +117,55 @@ func TestRouteRuleManager_exportRouteRule(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "Domain refer Not Exist Product 1")
 	})
+
+	t.Run("EPP cluster exports ordered EPPAddr from assignment", func(t *testing.T) {
+		rm := newManagerForExport(t, "20240102000000")
+		rm.SetEPPAssignmentResolver(&fakeEPPAssignmentResolver{
+			endpointsFn: func(ctx context.Context, clusterName string) ([]string, bool, error) {
+				return []string{"10.0.0.1:9002", "10.0.0.2:9002"}, true, nil
+			},
+		})
+		rm.clusterStorager = &fakeClusterStorager{
+			fetchClusterListFn: func(ctx context.Context, param *icluster_conf.ClusterFilter) ([]*icluster_conf.Cluster, error) {
+				c := newTestCluster()
+				c.BalanceMode = icluster_conf.BalanceModeEPP
+				return []*icluster_conf.Cluster{c}, nil
+			},
+		}
+
+		ed, err := rm.exportRouteRule(ctx)
+		require.NoError(t, err)
+		data := ed.DataWithoutVersion.(*RouteRuleExportData)
+		cConf := (*data.ClusterConf.Config)["c1"]
+		require.NotNil(t, cConf.GslbBasic.EPPAddr)
+		assert.Equal(t, []string{"10.0.0.1:9002", "10.0.0.2:9002"}, *cConf.GslbBasic.EPPAddr)
+		require.NotNil(t, cConf.GslbBasic.BalanceMode)
+		assert.Equal(t, icluster_conf.BalanceModeEPP, *cConf.GslbBasic.BalanceMode)
+	})
+
+	t.Run("EPP cluster without assignment degrades to WRR without failing export", func(t *testing.T) {
+		rm := newManagerForExport(t, "20240102000000")
+		rm.SetEPPAssignmentResolver(&fakeEPPAssignmentResolver{
+			endpointsFn: func(ctx context.Context, clusterName string) ([]string, bool, error) {
+				return nil, false, nil
+			},
+		})
+		rm.clusterStorager = &fakeClusterStorager{
+			fetchClusterListFn: func(ctx context.Context, param *icluster_conf.ClusterFilter) ([]*icluster_conf.Cluster, error) {
+				c := newTestCluster()
+				c.BalanceMode = icluster_conf.BalanceModeEPP
+				return []*icluster_conf.Cluster{c}, nil
+			},
+		}
+
+		ed, err := rm.exportRouteRule(ctx)
+		require.NoError(t, err)
+		data := ed.DataWithoutVersion.(*RouteRuleExportData)
+		cConf := (*data.ClusterConf.Config)["c1"]
+		assert.Nil(t, cConf.GslbBasic.EPPAddr)
+		require.NotNil(t, cConf.GslbBasic.BalanceMode)
+		assert.Equal(t, icluster_conf.BalanceModeWRR, *cConf.GslbBasic.BalanceMode)
+	})
 }
 
 func newTestCluster() *icluster_conf.Cluster {

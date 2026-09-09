@@ -72,6 +72,10 @@ func TestClusterModel2Control(t *testing.T) {
 	assert.Equal(t, "my-cluster", rsp.Name)
 	assert.Equal(t, "openai", *rsp.LLMConfig.Provider)
 
+	// balance_mode defaults to WRR and epp_config is null when never set.
+	assert.Equal(t, icluster_conf.BalanceModeWRR, rsp.BalanceMode)
+	assert.Nil(t, rsp.EppConfig)
+
 	data, err := json.Marshal(rsp)
 	assert.NoError(t, err)
 
@@ -80,4 +84,59 @@ func TestClusterModel2Control(t *testing.T) {
 	assert.False(t, strings.Contains(body, `"hostname"`))
 	assert.False(t, strings.Contains(body, `"ip"`))
 	assert.False(t, strings.Contains(body, `"ports"`))
+	assert.Contains(t, body, `"balance_mode":"WRR"`)
+	assert.Contains(t, body, `"epp_config":null`)
+}
+
+func TestClusterModel2Control_EPPFields(t *testing.T) {
+	// balance_mode=EPP with a stored raw epp_config: both are echoed
+	// verbatim (the dormant WRR retention keeps the stored JSON as-is).
+	cluster := &icluster_conf.Cluster{
+		Name: "epp-cluster",
+		Basic: &icluster_conf.ClusterBasic{
+			Protocol: lib.PString("https"),
+			Connection: &icluster_conf.ClusterBasicConnection{
+				MaxIdleConnPerRs:    0,
+				CancelOnClientClose: false,
+			},
+			Retries: &icluster_conf.ClusterBasicRetries{
+				MaxRetryInSubcluster: 2,
+			},
+			Buffers: &icluster_conf.ClusterBasicBuffers{
+				ReqWriteBufferSize: 512,
+			},
+			Timeouts: &icluster_conf.ClusterBasicTimeouts{
+				TimeoutConnServ:        50000,
+				TimeoutResponseHeader:  50000,
+				TimeoutReadbodyClient:  30000,
+				TimeoutReadClientAgain: 30000,
+				TimeoutWriteClient:     60000,
+			},
+		},
+		StickySessions: &icluster_conf.ClusterStickySessions{
+			SessionSticky: false,
+			HashStrategy:  icluster_conf.ClusterHashStrategyClientIPOnlyI,
+		},
+		BalanceMode: icluster_conf.BalanceModeEPP,
+		EppConfig:   `{"scheduling_profile":"balanced","kv_cache_utilization_max":0.9}`,
+	}
+
+	rsp := clusterModel2Control(cluster)
+	assert.Equal(t, icluster_conf.BalanceModeEPP, rsp.BalanceMode)
+	assert.JSONEq(t,
+		`{"scheduling_profile":"balanced","kv_cache_utilization_max":0.9}`,
+		string(rsp.EppConfig))
+
+	data, err := json.Marshal(rsp)
+	assert.NoError(t, err)
+	assert.Contains(t, string(data), `"balance_mode":"EPP"`)
+	assert.Contains(t, string(data), `"epp_config":{"scheduling_profile":"balanced","kv_cache_utilization_max":0.9}`)
+
+	// WRR dormancy: a stored epp_config is still returned verbatim.
+	cluster.BalanceMode = icluster_conf.BalanceModeWRR
+	rsp = clusterModel2Control(cluster)
+	assert.Equal(t, icluster_conf.BalanceModeWRR, rsp.BalanceMode)
+	assert.JSONEq(t,
+		`{"scheduling_profile":"balanced","kv_cache_utilization_max":0.9}`,
+		string(rsp.EppConfig))
 }

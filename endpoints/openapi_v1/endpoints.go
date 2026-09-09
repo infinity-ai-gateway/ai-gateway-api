@@ -26,6 +26,8 @@ import (
 	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/openapi_v1/domain"
 	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/openapi_v1/entity"
 	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/openapi_v1/entity_type"
+	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/openapi_v1/epp_assignments"
+	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/openapi_v1/epp_pool"
 	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/openapi_v1/global_route_rules"
 	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/openapi_v1/model_price"
 	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/openapi_v1/operation_log"
@@ -57,6 +59,8 @@ func endpoints() []*xreq.Endpoint {
 		product_pool.Endpoints,
 		subcluster.Endpoints,
 		bfe_pool.Endpoints,
+		epp_pool.Endpoints,
+		epp_assignments.Endpoints,
 		auth.Endpoints,
 		traffic.Endpoints,
 		bfe_cluster.Endpoints,

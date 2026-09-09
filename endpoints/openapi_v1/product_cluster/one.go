@@ -29,6 +29,7 @@
 package product_cluster
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/iauth"
@@ -101,6 +102,13 @@ type ClusterData struct {
 	StickySessions     *StickySessions          `json:"sticky_sessions"`
 	PassiveHealthCheck *PassiveHealthCheck      `json:"passive_health_check"`
 	LLMConfig          *icluster_conf.LLMConfig `json:"llm_config"`
+	// BalanceMode is the explicit cluster balance mode (WRR default, EPP
+	// optional); it is the single source of truth for the export BalanceMode.
+	BalanceMode string `json:"balance_mode"`
+	// EppConfig is the raw stored JSON of the simplified per-cluster EPP
+	// scheduling configuration, returned verbatim (null when never set;
+	// retained verbatim while dormant under WRR).
+	EppConfig json.RawMessage `json:"epp_config"`
 }
 
 type AutoLbMatrix struct {
@@ -147,6 +155,16 @@ func clusterModel2Control(cluster *icluster_conf.Cluster) *ClusterData {
 		PassiveHealthCheck: PassiveHealthCheckM2C(cluster.PassiveHealthCheck),
 
 		LLMConfig: cluster.LLMConfig,
+	}
+
+	// balance_mode defaults to WRR when never written; epp_config is echoed
+	// verbatim as the stored raw JSON (null when never set).
+	rsp.BalanceMode = cluster.BalanceMode
+	if rsp.BalanceMode == "" {
+		rsp.BalanceMode = icluster_conf.BalanceModeWRR
+	}
+	if cluster.EppConfig != "" {
+		rsp.EppConfig = json.RawMessage(cluster.EppConfig)
 	}
 
 	return rsp

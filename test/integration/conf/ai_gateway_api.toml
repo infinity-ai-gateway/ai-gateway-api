@@ -56,3 +56,8 @@ Debug = false
 AIRouteInnerProductName = "AI_product"
 DefaultAIInstancePoolName = "BFE.aipool"
 DefaultAIClusterName = "BFE-AI_product.szyf"
+# EPP 调度对接：测试环境允许单实例组；reconciler 周期调小以便
+# 未分配 cluster 在容量恢复后快速自动分配（生产默认 30s）。
+DefaultEPPInstancePoolName = "EPP.pool"
+EPPValidationMode = "test"
+EPPReconcileIntervalSeconds = 1

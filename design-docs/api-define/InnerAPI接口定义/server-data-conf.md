@@ -252,6 +252,14 @@ curl -X GET "http://api-server:port/inner-api/v1/configs/tls_conf/server_data_co
 
 > **说明**：`ModelTable` 由 InnerAPI 根据 `cluster.llm_config.provider` 查询 `/providers` 的 `time_zone` / `tiers` 与 `/model-prices` 的 `prices` / `tier_prices` 拼接后自动填充，不在 OpenAPI `/clusters` 端点中展示。`Currency` 固定为 `RMB`。
 
+### 3.3 GslbBasic.EPPAddr 有序主备语义
+
+`GslbBasic.EPPAddr` 为**有序列表**：`[0]`=主、`[1]`=备，仅 `BalanceMode=EPP` 时有值（`BalanceMode=WRR` 时为 `null`）。单实例组（测试环境）时仅 `[主]`。
+
+- 由 `epp_assignments` 分配驱动生成（见 OpenAPI 接口定义 [epp-assignments.md](../OpenAPI接口定义/epp-assignments.md)）：按 cluster 的分配记录取 `{primary, standby}`，实例地址由 `epp_instances` 的 host/port 经 `net.JoinHostPort` 拼接为 `host:port`（IPv6 自动加括号）。
+- EPP 模式 cluster 无有效分配记录时**降级导出**：该 cluster `BalanceMode` 置为 `WRR`、不生成 `EPPAddr`，同时 ai-gateway-api 输出 error 级日志（含 cluster 名与原因）；单 cluster 降级不阻塞整份 server_data_conf 下发，分配恢复后下轮导出自动回到 `EPP`。
+- 分配变更（cluster 进入 EPP 模式自动分配、`/epp-pool` 变更触发悬空修复、`PUT /api/v1/epp-assignments/{cluster}` 手工覆写）即时生效，下次导出自然带出。
+
 ## 4. 配置未变化返回示例
 
 ```json

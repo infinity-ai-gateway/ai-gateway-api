@@ -30,6 +30,7 @@ package container
 
 import (
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/api_key"
+	"github.com/rainway-ai-gateway/ai-gateway-api/model/epp_pool"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/iai_route"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/iauth"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/ibasic"
@@ -114,4 +115,8 @@ var (
 	// Operation logs
 	OperationLogStorager ioperlog.OperationLogStorager
 	OperationLogManager  ioperlog.OperationLogManagerInterface
+
+	// EPP scheduling integration (see model/epp_pool and design-docs
+	// modifications/2026-09-08-epp-scheduling-integration).
+	EppPoolManager *epp_pool.EppPoolManager
 )

@@ -11,8 +11,8 @@
 | 总体设计文档 | [总体设计文档.md](./总体设计文档.md) | 描述 `ai-gateway-api` 在 AI 网关中的定位、功能范围、三层架构（接口层/模型层/存储层）、组件交互关系、核心数据流以及 OpenAPI 与 InnerAPI 的职责划分。 |
 | 接口层设计文档 | [接口层设计文档.md](./接口层设计文档.md) | 描述管理面 OpenAPI（`/open-api/v1`）与数据面 InnerAPI（`/inner-api/v1`）的路由组织、统一的 `xreq.Endpoint` 抽象、全局与业务中间件链、子包划分以及典型接口实现模式。 |
 | 模型层设计文档 | [模型层设计文档.md](./模型层设计文档.md) | 描述 `model/` 层的子包职责、Manager + Storager 接口的分层模式、Param/Filter 设计、事务管理、典型业务流程以及各业务模型（API-Key、Entity、Provider、Cluster、Quota、RateLimit、Route 等）的交互方式。 |
-| 存储层设计文档 | [存储层设计文档.md](./存储层设计文档.md) | 描述 `storage/rdb` 层的 DAO + Storage 两层结构、通用 DAO 设计模式、事务与连接管理、29 张表的 DAO 映射关系以及 Storage 实现如何向上暴露接口供模型层调用。 |
-| 数据库设计文档 | [数据库设计文档.md](./数据库设计文档.md) | 描述 `ai-gateway-api` 当前实现中全部 29 张持久化表的字段、约束、索引、JSON 字段结构以及表间逻辑关系，覆盖基础配置、集群、路由、证书、API-Key、Entity、配额、限流、模型定价、操作日志等模块。 |
+| 存储层设计文档 | [存储层设计文档.md](./存储层设计文档.md) | 描述 `storage/rdb` 层的 DAO + Storage 两层结构、通用 DAO 设计模式、事务与连接管理、31 张表的 DAO 映射关系以及 Storage 实现如何向上暴露接口供模型层调用。 |
+| 数据库设计文档 | [数据库设计文档.md](./数据库设计文档.md) | 描述 `ai-gateway-api` 当前实现中全部 31 张持久化表的字段、约束、索引、JSON 字段结构以及表间逻辑关系，覆盖基础配置、集群、路由、证书、API-Key、Entity、配额、限流、模型定价、操作日志等模块。 |
 
 ---
 
@@ -32,6 +32,7 @@
 | Redis Key 清理机制 | [details/Redis Key 清理机制.md](./details/Redis%20Key%20清理机制.md) | 描述 API-Key / Entity 删除及 rate-limit 规则变更时的 Redis Key 清理逻辑，包括 Quota Key 与 Rate-Limit Key 格式、触发场景、对 BFE 的影响以及控制面立即清理实现方案。 |
 | 模型定价管理 | [api-define/OpenAPI接口定义/model-prices.md](../api-define/OpenAPI接口定义/model-prices.md) | 描述 `/model-prices` 管理接口、`model-list.yaml` 导入格式、`ModelPrice` 数据模型与校验规则，是 InnerAPI `AIConf.ModelTable` 的数据源。 |
 | RMB 配额分时段定价 | [details/RMB配额分时段定价.md](./details/RMB配额分时段定价.md) | 描述 RMB 配额按 provider 时段模板与 model-prices 分时段价格进行计费的设计，包括 `time_zone` / `tiers` / `tier_prices` 数据模型、控制面导出逻辑、BFE 数据面时段匹配与成本计算。 |
+| EPP 调度对接 | [details/EPP调度对接.md](./details/EPP调度对接.md) | 描述 EPP（llm-d 调度器）接入后控制面的四块能力：cluster `balance_mode`/`epp_config`（简化用户形态 + 确定性编译）、`/epp-pool` 静态实例池、分配器（贪心确定性算法、悬空修复、周期对账）、双向下发（server_data_conf 的 `BalanceMode`/`EPPAddr` 含降级语义、epp_data 单 topic 两段合并）。 |
 
 ---
 
