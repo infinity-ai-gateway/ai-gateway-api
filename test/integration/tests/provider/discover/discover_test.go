@@ -97,6 +97,23 @@ func TestProvider_DiscoverModels(t *testing.T) {
 		testutil.AssertDataFieldEquals(t, resp, "models", []interface{}{"claude-3-opus-20240229"})
 	})
 
+	t.Run("PV-6-002b Gemini 协议模型发现", func(t *testing.T) {
+		host, port := startModelServer(t, `{"models":[{"name":"models/gemini-2.5-pro"},{"name":"models/gemini-2.5-flash"}]}`)
+
+		resp, err := testutil.GetClient().Post("/open-api/v1/providers/tools/discover-models", map[string]interface{}{
+			"model_protocol": "gemini",
+			"schema":         "http",
+			"addr":           host,
+			"port":           port,
+			"apikey":         "AIzaSyxxx",
+		})
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		testutil.AssertDataFieldEquals(t, resp, "models", []interface{}{"gemini-2.5-pro", "gemini-2.5-flash"})
+	})
+
 	t.Run("PV-6-003 URI 为空时默认使用 /v1/models", func(t *testing.T) {
 		host, port := startModelServer(t, `{"data":[{"id":"m1"}]}`)
 

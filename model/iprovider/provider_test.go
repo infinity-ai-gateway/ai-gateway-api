@@ -537,6 +537,23 @@ func TestProviderManager_DiscoverModels(t *testing.T) {
 		assert.Equal(t, []string{"claude-3-opus-20240229"}, models)
 	})
 
+	t.Run("success gemini", func(t *testing.T) {
+		param := &DiscoverModelsParam{
+			ModelProtocol: "gemini",
+			Schema:        "https",
+			Addr:          "generativelanguage.googleapis.com",
+			Port:          443,
+			APIKey:        "sk-xxx",
+		}
+		caller := &fakeDiscoverCaller{body: []byte(`{"models":[{"name":"models/gemini-2.5-pro"},{"name":"models/gemini-2.5-flash"}]}`)}
+		m := NewProviderManager(&fakeTxn{}, &fakeProviderStorager{})
+		models, err := m.DiscoverModelsWithCaller(ctx, param, caller)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"gemini-2.5-pro", "gemini-2.5-flash"}, models)
+		assert.Equal(t, "https://generativelanguage.googleapis.com:443/v1beta/models", caller.lastURL)
+		assert.Equal(t, "sk-xxx", caller.lastHeaders["x-goog-api-key"])
+	})
+
 	t.Run("default uri", func(t *testing.T) {
 		param := &DiscoverModelsParam{
 			ModelProtocol: "openai",
@@ -655,6 +672,12 @@ func TestValidateProviderParam(t *testing.T) {
 		p := validProviderParam()
 		p.ModelProtocols = []string{"unknown"}
 		require.Error(t, ValidateProviderParam(p))
+	})
+
+	t.Run("gemini protocol", func(t *testing.T) {
+		p := validProviderParam()
+		p.ModelProtocols = []string{"gemini"}
+		require.NoError(t, ValidateProviderParam(p))
 	})
 
 	t.Run("duplicate protocol", func(t *testing.T) {
@@ -810,6 +833,11 @@ func TestBuildAuthHeader(t *testing.T) {
 
 	k, v = BuildAuthHeader("anthropic", "sk-xxx")
 	assert.Equal(t, "x-api-key", k)
+	assert.Equal(t, "sk-xxx", v)
+
+	k, v = BuildAuthHeader("gemini", "sk-xxx")
+	assert.Equal(t, "x-goog-api-key", k)
+	assert.Equal(t, "sk-xxx", v)
 }
 
 func TestParseModelDiscoveryResponse(t *testing.T) {
@@ -824,6 +852,13 @@ func TestParseModelDiscoveryResponse(t *testing.T) {
 		models, err := ParseModelDiscoveryResponse(body, "anthropic")
 		require.NoError(t, err)
 		assert.Equal(t, []string{"claude-3-opus-20240229", "claude-3-sonnet-20240229"}, models)
+	})
+
+	t.Run("gemini models with prefix stripped", func(t *testing.T) {
+		body := []byte(`{"models":[{"name":"models/gemini-2.5-pro"},{"name":"models/gemini-2.5-flash"}]}`)
+		models, err := ParseModelDiscoveryResponse(body, "gemini")
+		require.NoError(t, err)
+		assert.Equal(t, []string{"gemini-2.5-pro", "gemini-2.5-flash"}, models)
 	})
 
 	t.Run("generic fallback models array with name", func(t *testing.T) {

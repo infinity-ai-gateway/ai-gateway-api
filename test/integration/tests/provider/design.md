@@ -97,7 +97,7 @@ provider/
 | `models` | []string | N | 支持的模型列表，元素非空且不可重复 |
 | `keys` | []object | N | API-Key 列表，元素为 `{name, key}`；同一 Provider 内 `name` 唯一 |
 | `instance_pool` | []object | Y | 后端实例池，至少 1 个元素 |
-| `model_protocols` | []string | Y | 支持的模型访问协议，至少 1 个元素，枚举：`openai`、`anthropic` |
+| `model_protocols` | []string | Y | 支持的模型访问协议，至少 1 个元素，枚举：`openai`、`anthropic`、`gemini` |
 | `time_zone` | string | N | 计算时段所使用的时区，默认 `Asia/Shanghai` |
 | `tiers` | []object | N | 时段 tier 定义列表，**初期 `name` 只支持 `peak`** |
 
@@ -155,6 +155,7 @@ provider/
 | PV-1-001 | 最小参数创建 Provider | 200，返回的 `description` 为空字符串，`models`/`keys` 为空数组 |
 | PV-1-002 | 完整参数创建 Provider | 200，返回的 `models`、`keys`、`instance_pool` 与输入一致 |
 | PV-1-002a | 创建 anthropic 协议 Provider | 200，返回的 `model_protocols` 为 `["anthropic"]` |
+| PV-1-002c | 创建 gemini 协议 Provider | 200，返回的 `model_protocols` 为 `["gemini"]` |
 | PV-1-002b | instance_pool 不再包含 name 字段 | 200，返回的 instance 中无 `name` 字段 |
 | PV-1-003 | 重复 Provider 名称 | 555 |
 | PV-1-004 | 缺少 `instance_pool` | 422 |
@@ -364,6 +365,7 @@ provider/
 | PV-2-001 | 无分页参数返回全部 | 200，`pagination.total >= 2`，`list` 长度等于 `pagination.total` |
 | PV-2-002 | 自定义分页 | 200，`list` 长度为 1 |
 | PV-2-003 | 按 `model_protocol` 过滤 | 200，返回的 Provider 都包含 `openai` 协议 |
+| PV-2-004 | 按 `model_protocol=gemini` 过滤 | 200，返回的 Provider 都包含 `gemini` 协议 |
 
 ### 7.5 测试场景详细设计
 
@@ -451,6 +453,33 @@ provider/
 |------|--------|---------|
 | list | 非空数组 | NotEmpty |
 | list[i].model_protocols | 包含 "openai" | Contains |
+
+#### 7.5.4 PV-2-004：按 `model_protocol=gemini` 过滤
+
+##### 设计思路
+
+验证 `model_protocol=gemini` 过滤条件仅返回包含 `gemini` 协议的 Provider。
+
+##### 前提数据准备
+
+1. 已创建 openai 协议 Provider A 与 gemini 协议 Provider C。
+
+##### 执行步骤
+
+1. 发送 GET 请求，`model_protocol=gemini`。
+2. 验证响应 `ErrNum = 200`。
+3. 遍历 `list`，断言每个 Provider 的 `model_protocols` 包含 `gemini`。
+
+##### 预期返回结果
+
+**ErrNum**：200
+
+**Data 字段校验**：
+
+| 字段 | 预期值 | 校验方式 |
+|------|--------|---------|
+| list | 非空数组 | NotEmpty |
+| list[i].model_protocols | 包含 "gemini" | Contains |
 
 ## 8. 查询 Provider 详情
 
@@ -939,11 +968,11 @@ provider/
 
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| `model_protocol` | string | Y | 模型协议，枚举：`openai`、`anthropic` |
+| `model_protocol` | string | Y | 模型协议，枚举：`openai`、`anthropic`、`gemini` |
 | `schema` | string | Y | 协议方案，如 `http`、`https` |
 | `addr` | string | Y | 服务端地址 |
 | `port` | int | Y | 服务端端口 |
-| `uri` | string | N | 发现端点路径，默认 `/v1/models` |
+| `uri` | string | N | 发现端点路径，为空时按协议取默认值：`openai`/`anthropic` 为 `/v1/models`，`gemini` 为 `/v1beta/models` |
 | `apikey` | string | N | 访问远端时使用的 API-Key |
 
 ### 12.3 测试用例
@@ -952,6 +981,7 @@ provider/
 |----------|----------|----------|
 | PV-6-001 | OpenAI 协议模型发现 | 200，返回模型列表 `["m1", "m2"]` |
 | PV-6-002 | Anthropic 协议模型发现 | 200，返回模型列表 `["claude-3-opus-20240229"]` |
+| PV-6-002b | Gemini 协议模型发现 | 200，返回模型列表 `["gemini-2.5-pro", "gemini-2.5-flash"]`（`models[].name` 剥离 `models/` 前缀） |
 | PV-6-003 | URI 为空时默认使用 /v1/models | 200，返回 `["m1"]` |
 | PV-6-004 | 缺少必填参数 | 422 |
 | PV-6-005 | 非法 model_protocol | 422 |
@@ -1016,7 +1046,35 @@ provider/
 
 ---
 
-#### 12.4.3 PV-6-003：URI 为空时默认使用 /v1/models
+#### 12.4.3 PV-6-002b：Gemini 协议模型发现
+
+##### 设计思路
+
+验证 Gemini 协议下，工具接口默认调用 `/v1beta/models`，并能正确解析 `models[].name` 字段、剥离 `models/` 前缀。
+
+##### 前提数据准备
+
+1. 启动本地 HTTP 测试服务器，返回 `{"models":[{"name":"models/gemini-2.5-pro"},{"name":"models/gemini-2.5-flash"}]}`。
+
+##### 执行步骤
+
+1. 发送 POST 请求，`model_protocol=gemini`，不传 `uri`。
+2. 验证响应 `ErrNum = 200`。
+3. 断言返回的 `models` 为 `["gemini-2.5-pro", "gemini-2.5-flash"]`。
+
+##### 预期返回结果
+
+**ErrNum**：200
+
+**Data 字段校验**：
+
+| 字段 | 预期值 | 校验方式 |
+|------|--------|---------|
+| models | ["gemini-2.5-pro", "gemini-2.5-flash"] | Equals |
+
+---
+
+#### 12.4.4 PV-6-003：URI 为空时默认使用 /v1/models
 
 ##### 设计思路
 
@@ -1034,7 +1092,7 @@ provider/
 
 ---
 
-#### 12.4.4 PV-6-004 ~ PV-6-006：参数与协议校验
+#### 12.4.5 PV-6-004 ~ PV-6-006：参数与协议校验
 
 ##### 设计思路
 
@@ -1352,7 +1410,7 @@ tiers:
 2. `keys` 作为数组，按**全量替换**处理；更新时如需保留旧 Key，需传入完整列表。
 3. `models` 同样按**全量替换**处理；若移除被 Cluster 引用的 Model，更新会被拒绝（409）。
 4. `instance_pool` 中 `(addr, port)` 组合不能重复；`name` 为空字符串时系统会默认填充为 `addr`。
-5. `model_protocols` 当前枚举值为 `openai`、`anthropic`。
+5. `model_protocols` 当前枚举值为 `openai`、`anthropic`、`gemini`。
 6. `/providers/tools/discover-models` 为无状态工具接口，不绑定 Provider；集成测试通过本地 `httptest` 服务器模拟远端响应。
 7. `PUT /providers/{provider_name}/pricing-tiers` 只更新 `time_zone`/`tiers`，不会覆盖 provider 的其他字段。
 8. 更新 Provider 时若请求体包含 `name`，接口返回 422；`name` 只能通过创建接口指定。

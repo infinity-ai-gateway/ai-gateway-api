@@ -40,6 +40,7 @@ var (
 	ValidModelProtocols = map[string]bool{
 		"openai":    true,
 		"anthropic": true,
+		"gemini":    true,
 	}
 )
 
@@ -786,6 +787,8 @@ func BuildAuthHeader(protocol, key string) (string, string) {
 	switch protocol {
 	case "anthropic":
 		return "x-api-key", key
+	case "gemini":
+		return "x-goog-api-key", key
 	case "openai":
 		fallthrough
 	default:
