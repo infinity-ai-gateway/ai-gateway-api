@@ -1201,6 +1201,9 @@ URI：`non-existent-id`
 | AK-5-002 | 部分更新 route_rules | 正常参数 | route_rules 更新 |
 | AK-5-003 | 部分更新后查询一致性 | 返回数据 | PATCH 后立即 GET，验证数据一致 |
 | AK-5-004 | 部分更新非法 rate_limit_policy | 合法性条件 | 验证 ErrNum=422 |
+| AK-5-005 | 部分更新 quota_plan 切换为 RMB | 正常参数 | unit 切换后余额同步重置 |
+| AK-5-006 | 部分更新省略 models/subnet 保持原值 | 契约钉死 | PATCH 省略 models/subnet 时白名单不被重置为 ["*"]（issue #151 回归） |
+| AK-5-007 | 部分更新显式修改 models/subnet 生效 | 正常参数 | 显式提供的 models/subnet 正确更新 |
 
 ### 10.4 测试场景详细设计
 
@@ -1409,6 +1412,61 @@ URI：`non-existent-id`
 | quota_plan.unit | "RMB" | Equals |
 | quota_plan.quota | 888.88 | Equals |
 | quota_plan.balance | 不存在 | NotExists |
+
+---
+
+#### 10.4.6 AK-5-006：部分更新省略 models/subnet 保持原值（契约钉死）
+
+##### 设计思路
+
+钉死 PATCH"仅传需修改字段"契约对 `models`/`subnet` 的适用（api-keys.md §2.5，issue #151）：PATCH 省略两字段时必须保留原值，不得被静默重置为默认 `["*"]`（修复前 storager 层默认值回填会绕过 DAO nil-skip，属数据丢失 + 权限放大）。
+
+##### 前提数据准备
+
+已创建 API-Key，显式指定 `models=["controlled-model-a"]`、`subnet=["10.0.0.0/24"]`。
+
+##### 执行步骤
+
+1. POST 创建携带白名单的 API-Key。
+2. PATCH 仅修改 `description`，省略 `models`/`subnet`。
+3. GET 查询，验证 `description` 已更新，`models`/`subnet` 保持创建时的白名单原值。
+
+##### 预期返回结果
+
+**ErrNum**：200  
+**Data 字段校验**：
+
+| 字段 | 预期值 | 校验方式 |
+|------|--------|---------|
+| models | ["controlled-model-a"] | Equals |
+| subnet | ["10.0.0.0/24"] | Equals |
+
+---
+
+#### 10.4.7 AK-5-007：部分更新显式修改 models/subnet 生效（正常参数）
+
+##### 设计思路
+
+验证 PATCH 显式提供 `models`/`subnet` 时正常更新（与 AK-5-006 互补，防止过度修复导致显式更新失效）。
+
+##### 前提数据准备
+
+已创建 API-Key，指定 `models=["controlled-model-a"]`。
+
+##### 执行步骤
+
+1. PATCH 显式传入新的 `models=["model-x","model-y"]`、`subnet=["192.168.0.0/16"]`。
+2. GET 查询，验证两字段已更新为新值。
+
+##### 预期返回结果
+
+**ErrNum**：200  
+**Data 字段校验**：
+
+| 字段 | 预期值 | 校验方式 |
+|------|--------|---------|
+| models | ["model-x", "model-y"] | Equals |
+| subnet | ["192.168.0.0/16"] | Equals |
 
 ---
 
