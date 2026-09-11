@@ -68,6 +68,11 @@ func TEntityIDSeqUpdate(dbCtx lib.DBContexter, val, where *TEntityIDSeqParam) (i
 // It uses the same allocation strategy as TAPIKeyIDSeqAllocate: a single
 // atomic statement on MySQL and an INSERT OR IGNORE + UPDATE on SQLite,
 // avoiding the deadlock-prone compare-and-set retry loop (see issue #99).
+//
+// Like TAPIKeyIDSeqAllocate, it intentionally uses the connection pool
+// (dbCtx.Conn()) rather than dbCtx.Execer(): the allocation must commit
+// independently of any enclosing transaction, and it is only invoked at the
+// endpoint layer, outside any AtomExecute transaction.
 func TEntityIDSeqAllocate(dbCtx lib.DBContexter, name string) (int64, error) {
 	conn := dbCtx.Conn()
 	return allocateEntityIDSeq(conn, name)

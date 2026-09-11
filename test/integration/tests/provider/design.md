@@ -32,13 +32,13 @@ Provider 与 Cluster 概念分离后：
 | 查询 Provider 列表 | 3 |
 | 查询 Provider 详情 | 3 |
 | 更新 Provider | 7 |
-| Provider instance_pool 同步到 Inner API | 3 |
+| Provider instance_pool 同步到 Inner API | 5 |
 | 删除 Provider | 4 |
 | 触发模型发现 | 6 |
 | 获取所有 Provider 名称 | 1 |
 | instance_pool 默认 name 生成 | 1 |
 | 设置高峰/闲时模板 | 10 |
-| **合计** | **53** |
+| **合计** | **55** |
 
 ## 4. 认证方式
 
@@ -766,6 +766,8 @@ provider/
 | PV-SYNC-1-001 | 修改 provider instance_pool 后 cluster_table 同步更新 | cluster_table 中 cluster 的 backend 变为新实例 |
 | PV-SYNC-1-002 | 更新 Provider 移除被 Cluster 引用的 Key | 409 |
 | PV-SYNC-1-003 | 更新 Provider 移除被 Cluster 引用的 Model | 409 |
+| PV-SYNC-1-004 | 更新 Provider 移除被 Cluster 引用的 Model（issue #156 事务回滚契约） | 409，且 GET Provider models 保持原值未变 |
+| PV-SYNC-1-005 | 更新 Provider 移除未被引用的 Model（对照组） | 200，且 GET Provider models 仅保留 m1 |
 
 ### 10.3 测试场景详细设计
 
@@ -842,6 +844,51 @@ provider/
 ##### 预期返回结果
 
 **ErrNum**：409
+
+#### 10.3.4 PV-SYNC-1-004：更新 Provider 移除被 Cluster 引用的 Model（issue #156 事务回滚契约）
+
+##### 设计思路
+
+PV-SYNC-1-003 只断言了 409 响应；本用例钉死 issue #156 的完整契约：409 时更新必须随事务回滚，Provider 记录保持原值。若 dao 语句绕过事务走连接池 autocommit（假事务），该用例的 GET 断言会失败。
+
+##### 前提数据准备
+
+1. 创建 Provider，携带 models `m1`、`m2`。
+2. 创建 Cluster，`llm_config.models` 引用 `m2`。
+
+##### 执行步骤
+
+1. 发送 PATCH 请求，将 `models` 更新为仅保留 `m1`。
+2. 验证响应 `ErrNum = 409`。
+3. GET 查询该 Provider，验证 `models` 仍为 `m1`、`m2`（更新被回滚）。
+
+##### 预期返回结果
+
+**ErrNum**：409
+
+**断言**：GET `/open-api/v1/providers/{provider_name}` 返回的 `models` 与初始值一致（ElementsMatch `m1`、`m2`）。
+
+#### 10.3.5 PV-SYNC-1-005：更新 Provider 移除未被引用的 Model（对照组）
+
+##### 设计思路
+
+对照组：无引用冲突时 PATCH 应成功且变更持久化，排除"回滚逻辑误伤正常更新"的可能。
+
+##### 前提数据准备
+
+1. 创建 Provider，携带 models `m1`、`m2`（无任何 Cluster 引用）。
+
+##### 执行步骤
+
+1. 发送 PATCH 请求，将 `models` 更新为仅保留 `m1`。
+2. 验证响应成功。
+3. GET 查询该 Provider，验证 `models` 仅剩 `m1`。
+
+##### 预期返回结果
+
+**ErrNum**：200
+
+**断言**：GET `/open-api/v1/providers/{provider_name}` 返回的 `models` 为 `m1`。
 
 ## 11. 删除 Provider
 
