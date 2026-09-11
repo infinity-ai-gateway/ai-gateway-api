@@ -107,7 +107,7 @@ func TModelPriceListWithPagination(dbCtx lib.DBContexter, where *TModelPricePara
 		return nil, xerror.WrapDaoError(err)
 	}
 
-	rows, err := dbCtx.Conn().QueryContext(dbCtx, sql, args...)
+	rows, err := dbCtx.Execer().QueryContext(dbCtx, sql, args...)
 	if err != nil {
 		return nil, xerror.WrapDaoError(err)
 	}
@@ -136,7 +136,7 @@ func TModelPriceCount(dbCtx lib.DBContexter, where *TModelPriceParam) (int64, er
 		return 0, xerror.WrapDaoError(err)
 	}
 
-	rows, err := dbCtx.Conn().QueryContext(dbCtx, sql, args...)
+	rows, err := dbCtx.Execer().QueryContext(dbCtx, sql, args...)
 	if err != nil {
 		return 0, xerror.WrapDaoError(err)
 	}

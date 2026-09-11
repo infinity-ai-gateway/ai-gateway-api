@@ -51,6 +51,24 @@ func TestDBContextBeginTrans(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestDBContextExecer(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	ctx := NewDBContext(context.Background(), db)
+
+	// Without a transaction, Execer routes to the connection pool.
+	assert.Equal(t, db, ctx.Execer())
+
+	// With a transaction, Execer routes to the transaction.
+	mock.ExpectBegin()
+	require.NoError(t, ctx.BeginTrans())
+	assert.Equal(t, ctx.tx, ctx.Execer())
+
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestOpHelpers(t *testing.T) {
 	assert.True(t, WantBlockWrite(BlockWrite()))
 	assert.False(t, WantBlockWrite())

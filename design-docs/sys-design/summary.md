@@ -33,6 +33,7 @@
 | 模型定价管理 | [api-define/OpenAPI接口定义/model-prices.md](../api-define/OpenAPI接口定义/model-prices.md) | 描述 `/model-prices` 管理接口、`model-list.yaml` 导入格式、`ModelPrice` 数据模型与校验规则，是 InnerAPI `AIConf.ModelTable` 的数据源。 |
 | RMB 配额分时段定价 | [details/RMB配额分时段定价.md](./details/RMB配额分时段定价.md) | 描述 RMB 配额按 provider 时段模板与 model-prices 分时段价格进行计费的设计，包括 `time_zone` / `tiers` / `tier_prices` 数据模型、控制面导出逻辑、BFE 数据面时段匹配与成本计算。 |
 | EPP 调度对接 | [details/EPP调度对接.md](./details/EPP调度对接.md) | 描述 EPP（llm-d 调度器）接入后控制面的四块能力：cluster `balance_mode`/`epp_config`（简化用户形态 + 确定性编译）、`/epp-pool` 静态实例池、分配器（贪心确定性算法、悬空修复、周期对账）、双向下发（server_data_conf 的 `BalanceMode`/`EPPAddr` 含降级语义、epp_data 单 topic 两段合并）。 |
+| 部分更新语义与 DAO 的 nil-skip 约定 | [details/部分更新语义与DAO-nil-skip约定.md](./details/部分更新语义与DAO-nil-skip约定.md) | 描述 PATCH"仅传需修改字段"契约的实现机制（DAO `struct2map` nil-skip）与 storager 层约束（不得把省略抹平为默认值）；各资源省略字段行为对照表（API-Key `models`/`subnet`、Entity `allow_models`/`block_models`、Provider 五字段）；Create/PATCH 默认值语义差异与"显式空数组不区分"的已知限制（issue #151、#147）。 |
 
 ---
 

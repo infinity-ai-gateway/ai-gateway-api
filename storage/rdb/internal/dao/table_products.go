@@ -129,6 +129,6 @@ DELETE FROM extra_files  			WHERE product_id = xxx; `
 func TProductDeleteByProductID(dbCtx lib.DBContexter, productID int64) error {
 	sql := strings.Replace(deleteSQL, "xxx", fmt.Sprintf("%d", productID), -1)
 
-	_, err := dbCtx.Conn().ExecContext(dbCtx, sql)
+	_, err := dbCtx.Execer().ExecContext(dbCtx, sql)
 	return err
 }

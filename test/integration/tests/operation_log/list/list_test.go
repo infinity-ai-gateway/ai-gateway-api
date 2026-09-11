@@ -301,6 +301,46 @@ func TestOperationLog_FailedOperationRecordsError(t *testing.T) {
 	_ = testutil.DeleteCluster(clusterName)
 }
 
+// TestOperationLog_FailedEntityUpdateKeepsResourceIdentity 验证 Entity 前置校验失败时
+// 失败审计日志仍保留资源身份（issue #155 / SC2101-TC046 回归锚点）。
+func TestOperationLog_FailedEntityUpdateKeepsResourceIdentity(t *testing.T) {
+	client := testutil.GetClient()
+
+	// 1. 创建 entity-type（level 1）与目标 entity。
+	typeName := testutil.UniqueEntityTypeName()
+	_, err := testutil.CreateEntityType(typeName, 1)
+	require.NoError(t, err, "create entity type failed")
+	defer testutil.DeleteEntityType(typeName)
+
+	entityName := testutil.UniqueEntityName()
+	entityID, err := testutil.CreateEntity(entityName, typeName, "")
+	require.NoError(t, err, "create entity failed")
+	defer testutil.DeleteEntity(entityID)
+
+	// 2. PUT 极简 body（仅 parent_id 且指向不存在的 entity），触发事务前置层级校验失败。
+	resp, err := client.Put("/open-api/v1/entities/"+entityID, map[string]interface{}{
+		"parent_id": "entity-not-exist-888",
+	})
+	require.NoError(t, err, "update entity request failed")
+	assert.NotEqual(t, 200, resp.ErrNum, "expected update entity to fail")
+
+	// 3. 轮询等待失败日志，断言资源身份齐全（resource_id == URI 中的 Entity ID）。
+	entry, err := testutil.WaitForOperationLog(map[string]string{
+		"resource_type": "entity",
+		"action":        "update",
+		"resource_id":   entityID,
+		"status":        "2",
+	}, 0)
+	require.NoError(t, err, "expected failed operation log with resource identity not found")
+
+	assert.Equal(t, "entity", entry.ResourceType)
+	assert.Equal(t, "update", entry.Action)
+	assert.Equal(t, entityID, entry.ResourceID)
+	assert.Equal(t, entityName, entry.ResourceName)
+	assert.Equal(t, float64(2), entry.Status, "operation should be failed")
+	assert.NotEmpty(t, entry.ErrorMsg, "failed operation log should contain error message")
+}
+
 // TestOperationLog_UpdateEntityTypeHasDiffKeys 验证 update 动作的操作日志包含 diff_keys。
 func TestOperationLog_UpdateEntityTypeHasDiffKeys(t *testing.T) {
 	client := testutil.GetClient()

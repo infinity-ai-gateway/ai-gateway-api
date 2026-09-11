@@ -139,7 +139,9 @@ func NewBFEDBContext(ctx context.Context, ops ...*lib.Op) (*lib.DBContext, error
 
 	dc = lib.NewDBContext(ctx, conn)
 	if lib.WantOpenTxn(ops...) {
-		dc.BeginTrans()
+		if err := dc.BeginTrans(); err != nil {
+			return nil, err
+		}
 	}
 
 	return dc, nil

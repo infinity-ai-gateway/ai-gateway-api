@@ -114,7 +114,7 @@ func TOperationLogCount(dbCtx lib.DBContexter, where *TOperationLogParam) (int64
 		return 0, xerror.WrapDaoError(err)
 	}
 
-	rows, err := dbCtx.Conn().QueryContext(dbCtx, sql, args...)
+	rows, err := dbCtx.Execer().QueryContext(dbCtx, sql, args...)
 	if err != nil {
 		return 0, xerror.WrapDaoError(err)
 	}

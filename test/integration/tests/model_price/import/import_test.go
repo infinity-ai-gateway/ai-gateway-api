@@ -188,6 +188,69 @@ func TestModelPrice_Import(t *testing.T) {
 		_, _, _ = testutil.ImportModelPricesWithResult([]byte(buildYAML(nil)), "replace")
 	})
 
+	t.Run("MP-1-011 merge 模式整行覆盖：最小记录清空可选字段（契约钉死）", func(t *testing.T) {
+		// 创建一条携带可选字段的已有记录
+		provider := testutil.UniqueName("provider")
+		model := "merge-cover-model"
+		id, err := testutil.CreateModelPrice(map[string]interface{}{
+			"provider":             provider,
+			"model":                model,
+			"base_model":           model,
+			"mode":                 "chat",
+			"capabilities":         []string{"chat", "reasoning", "tools", "embedding", "rerank"},
+			"supported_parameters": []string{"temperature", "max_tokens"},
+			"limits":               map[string]interface{}{"context_window": 128000},
+			"metadata":             map[string]interface{}{"source": "test"},
+			"prices": map[string]interface{}{
+				"input_cost_per_token": 0.0001,
+			},
+		})
+		if err != nil {
+			t.Fatalf("setup failed: %v", err)
+		}
+
+		// merge 导入同键最小记录（仅必填字段），按 §3.1 第 9 步契约：
+		// 命中已有记录时整行覆盖，未提供的可选字段被清空
+		yaml := buildYAML([]map[string]interface{}{
+			{
+				"provider": provider,
+				"model":    model,
+				"mode":     "chat",
+				"prices": map[string]float64{
+					"input_cost_per_token": 0.0002,
+				},
+			},
+		})
+
+		result, resp, err := testutil.ImportModelPricesWithResult([]byte(yaml), "merge")
+		if err != nil {
+			t.Fatalf("import failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		assert.Equal(t, 1, result.ImportedCount)
+
+		one, err := testutil.GetClient().Get("/open-api/v1/model-prices/" + fmt.Sprintf("%d", id))
+		if err != nil {
+			t.Fatalf("get failed: %v", err)
+		}
+		testutil.AssertSuccess(t, one)
+
+		var data map[string]interface{}
+		if err := json.Unmarshal(one.Data, &data); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		// 必填字段按导入值更新
+		prices := data["prices"].(map[string]interface{})
+		assert.InDelta(t, 0.0002, prices["input_cost_per_token"], 0.0000001)
+		// 未提供的可选字段被清空（序列化 omitempty → 字段缺失）
+		for _, field := range []string{"capabilities", "supported_parameters", "limits", "metadata", "tier_prices"} {
+			_, ok := data[field]
+			assert.False(t, ok, "expected field %s cleared after merge overwrite", field)
+		}
+
+		_, _, _ = testutil.ImportModelPricesWithResult([]byte(buildYAML(nil)), "replace")
+	})
+
 	t.Run("MP-1-003 默认 replace 模式", func(t *testing.T) {
 		provider := testutil.UniqueName("provider")
 		yaml := buildYAML([]map[string]interface{}{

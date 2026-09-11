@@ -68,6 +68,11 @@ func TAPIKeyIDSeqUpdate(dbCtx lib.DBContexter, val, where *TAPIKeyIDSeqParam) (i
 // It performs a single atomic UPDATE to increment next_seq and return the new
 // value, avoiding the compare-and-set retry loop that caused lock wait timeouts
 // under MySQL's default REPEATABLE READ isolation level (see issue #99).
+//
+// It intentionally uses the connection pool (dbCtx.Conn()) rather than
+// dbCtx.Execer(): the allocation is a self-contained mini-transaction that
+// must commit independently, and it is only invoked at the endpoint layer,
+// outside any enclosing AtomExecute transaction.
 func TAPIKeyIDSeqAllocate(dbCtx lib.DBContexter, productName string) (int64, error) {
 	conn := dbCtx.Conn()
 	return allocateAPIKeyIDSeq(conn, productName)

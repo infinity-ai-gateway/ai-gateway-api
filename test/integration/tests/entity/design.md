@@ -1244,6 +1244,10 @@ URI：`non_existent_id`
 | E-5-001 | 部分更新 allow_models | 正常参数 | allow_models 更新 |
 | E-5-002 | 部分更新后查询一致性 | 返回数据 | PATCH 后立即 GET，验证数据一致 |
 | E-5-003 | 部分更新非法 route_rules（规则名重复） | 合法性条件 | 验证 ErrNum=422 |
+| E-5-004 | 部分更新 quota_plan 切换为 RMB | 正常参数 | unit 切换后余额同步重置 |
+| E-5-005 | 部分更新非法 name（含空格 / 下划线开头） | 合法性条件 | 验证 ErrNum=422 |
+| E-5-006 | 部分更新省略 allow_models/block_models 保持原值 | 契约钉死 | PATCH 省略 allow_models 时保持原值、block_models 正常更新（issue #152 回归） |
+| E-5-007 | 部分更新仅改 name 时模型列表保持 | 契约钉死 | PATCH 仅改 name 时 allow_models 保持原值（issue #152 回归） |
 
 ### 10.4 测试场景详细设计
 
@@ -1411,6 +1415,61 @@ URI：`non_existent_id`
 | quota_plan.unit | "RMB" | Equals |
 | quota_plan.quota | 777.7777 | Equals |
 | quota_plan.balance | 不存在 | NotExists |
+
+---
+
+#### 10.4.6 E-5-006：部分更新省略 allow_models/block_models 保持原值（契约钉死）
+
+##### 设计思路
+
+钉死 PATCH"仅传需修改字段"契约对 `allow_models`/`block_models` 的适用（entities.md §2.5，issue #152）：PATCH 省略 `allow_models` 时必须保留原值，不得被静默重置为 `[]`。Entity 处于配额与权限继承树的节点位置，两字段被清空会改变该节点及其子树的有效模型集（数据丢失 + 权限语义静默变更）。
+
+##### 前提数据准备
+
+已创建 Entity，显式指定 `allow_models=["model-a"]`、`block_models=["model-b"]`。
+
+##### 执行步骤
+
+1. POST 创建携带模型列表的 Entity。
+2. PATCH 仅修改 `block_models=["model-c"]`，省略 `allow_models`。
+3. GET 查询，验证 `block_models` 已更新为 `["model-c"]`，`allow_models` 保持原值 `["model-a"]`。
+
+##### 预期返回结果
+
+**ErrNum**：200  
+**Data 字段校验**：
+
+| 字段 | 预期值 | 校验方式 |
+|------|--------|---------|
+| allow_models | ["model-a"] | Equals |
+| block_models | ["model-c"] | Equals |
+
+---
+
+#### 10.4.7 E-5-007：部分更新仅改 name 时模型列表保持（契约钉死）
+
+##### 设计思路
+
+补充验证最常见局部更新场景（仅改名）：省略 `allow_models` 时保持原值，防止修复遗漏其他 PATCH 路径。
+
+##### 前提数据准备
+
+已创建 Entity，显式指定 `allow_models=["model-a","model-b"]`。
+
+##### 执行步骤
+
+1. PATCH 仅修改 `name` 为新的合法名称，省略 `allow_models`。
+2. GET 查询，验证 `name` 已更新，`allow_models` 保持原值。
+
+##### 预期返回结果
+
+**ErrNum**：200  
+**Data 字段校验**：
+
+| 字段 | 预期值 | 校验方式 |
+|------|--------|---------|
+| name | <新名称> | Equals |
+| allow_models | ["model-a", "model-b"] | Equals |
 
 ---
 

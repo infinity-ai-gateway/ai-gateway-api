@@ -173,6 +173,7 @@ MTP-1-{场景编号}
 | MP-1-008 | 未知 provider 可导入 | 正常参数 | provider 不存在于 `/providers` 时仍可导入 |
 | MP-1-009 | 科学计数法价格导入 | 正常参数 | 10~12 位小数价格以科学计数法书写，导入后按 float64 等价解析 |
 | MP-1-010 | 超精度价格拒绝 | 合法性条件 | 价格 × 1e8 ≥ 2^53 时导入返回 422 |
+| MP-1-011 | merge 模式整行覆盖：最小记录清空可选字段 | 契约钉死 | merge 命中已有记录时整行替换，未提供的可选字段被清空（model-prices.md §3.1 第 9 步） |
 
 ### 7.4 测试场景详细设计
 
@@ -375,6 +376,37 @@ models:
 
 **ErrNum**：422  
 **ErrMsg**：包含 price exceeds the maximum representable precision 错误信息
+
+---
+
+#### MP-1-011：merge 模式整行覆盖：最小记录清空可选字段（契约钉死）
+
+##### 设计思路
+
+钉死 `mode=merge` 对已存在 `(provider, model, mode)` 记录的**整行覆盖**契约（api-define `model-prices.md` §3.1 第 9 步，issue #154 结论：保留整行覆盖、文档明示）：命中已有记录时以导入条目为权威定义，条目未提供的可选字段被清空，而非保留原值。该语义与 PUT 路径（`mergeModelPrice` 省略保留）刻意不同，防止未来重构无意中将契约改为字段合并。
+
+##### 前提数据准备
+
+已存在携带可选字段的记录：`capabilities`/`supported_parameters`/`limits`/`metadata` 均有值。
+
+##### 执行步骤
+
+1. POST 创建携带可选字段的记录。
+2. 构造仅含必填五项（`provider`/`model`/`base_model`/`mode`/`prices`）的最小 YAML 记录，键与已有记录相同，价格不同。
+3. 以 `mode=merge` 调用导入接口。
+4. 验证 `imported_count=1`。
+5. 按 id 查询记录，验证价格已更新为导入值，且 `capabilities`/`supported_parameters`/`limits`/`metadata`/`tier_prices` 均被清空（响应 `omitempty` → 字段缺失）。
+
+##### 预期返回结果
+
+**ErrNum**：200  
+**Data 字段校验**：
+
+| 字段 | 预期值 | 校验方式 |
+|------|--------|---------|
+| imported_count | 1 | Equals |
+| prices.input_cost_per_token | 0.0002 | InDelta |
+| capabilities / supported_parameters / limits / metadata / tier_prices | 不存在 | NotExists |
 
 ---
 

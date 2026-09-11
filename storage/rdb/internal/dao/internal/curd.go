@@ -49,7 +49,7 @@ func queryList(dbCtx lib.DBContexter, table string, where interface{}, rst inter
 	}
 
 	now := time.Now()
-	rows, err := dbCtx.Conn().QueryContext(dbCtx, sql, args...) // .ScanContext(dbCtx, rst).Error
+	rows, err := dbCtx.Execer().QueryContext(dbCtx, sql, args...) // .ScanContext(dbCtx, rst).Error
 	record := &stateful.SQLRecord{
 		SQL:  sql,
 		Args: args,
@@ -78,7 +78,7 @@ func Create(dbCtx lib.DBContexter, table string, data ...interface{}) (int64, er
 
 	now := time.Now()
 
-	rst, err := dbCtx.Conn().ExecContext(dbCtx, sql, args...)
+	rst, err := dbCtx.Execer().ExecContext(dbCtx, sql, args...)
 	sr := &stateful.SQLRecord{
 		SQL:  sql,
 		Args: args,
@@ -104,7 +104,7 @@ func Update(dbCtx lib.DBContexter, table string, where interface{}, data interfa
 	}
 
 	now := time.Now()
-	rst, err := dbCtx.Conn().ExecContext(dbCtx, sql, args...)
+	rst, err := dbCtx.Execer().ExecContext(dbCtx, sql, args...)
 	sr := &stateful.SQLRecord{
 		SQL:  sql,
 		Args: args,
@@ -129,7 +129,7 @@ func Delete(dbCtx lib.DBContexter, table string, where interface{}) (int64, erro
 
 	now := time.Now()
 
-	rst, err := dbCtx.Conn().ExecContext(dbCtx, sql, args...)
+	rst, err := dbCtx.Execer().ExecContext(dbCtx, sql, args...)
 	sr := &stateful.SQLRecord{
 		SQL:  sql,
 		Args: args,

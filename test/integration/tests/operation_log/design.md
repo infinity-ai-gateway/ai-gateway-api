@@ -18,7 +18,8 @@
 | 查询过滤与分页 | 7 |
 | update diff_keys 验证 | 2 |
 | 溯源字段记录 | 1 |
-| **合计** | **23** |
+| 失败日志资源身份 | 1 |
+| **合计** | **24** |
 
 ## 4. 认证方式
 
@@ -339,24 +340,44 @@ resource_type=entity_type&action=create&page=2&page_size=2
 
 ---
 
-## 8. update diff_keys 验证
+## 8. 失败日志资源身份（issue #155）
 
 ### 8.1 设计思路
 
-针对 `update` 动作的操作日志，除校验基本字段外，进一步验证 `change_summary` 中包含 `before`、`after` 以及 `diff_keys`，确保变更差异可被前端正确展示。
+Entity 更新在事务前置校验失败时（如极简 body 只带 `parent_id` 且指向不存在的父节点），失败审计日志必须保留资源身份（`resource_id`/`resource_name`），否则失败记录无法按资源维度检索（issue #155 / E2E SC2101-TC046 回归锚点）。
 
 ### 8.2 覆盖场景
+
+| 编号 | 场景 | 触发 API | 校验重点 |
+|------|------|----------|----------|
+| OL-ID-001 | 前置校验失败的更新日志保留资源身份 | `PUT /open-api/v1/entities/{id}`（body 仅 `parent_id` 指向不存在实体） | `status=2`；`resource_id` == URI 中的 Entity ID；`resource_name` 为库中名称；`error_msg` 非空 |
+
+### 8.3 校验点
+
+- 失败日志 `resource_id`/`resource_name` 非空（修复前置分支从请求体取身份，极简 body 下为空串）。
+- `resource_parent_id` 保留请求值（修改意图的一部分）。
+- 通过 `WaitForOperationLog` 按 `resource_id` 过滤轮询，直接锚定目标记录。
+
+---
+
+## 9. update diff_keys 验证
+
+### 9.1 设计思路
+
+针对 `update` 动作的操作日志，除校验基本字段外，进一步验证 `change_summary` 中包含 `before`、`after` 以及 `diff_keys`，确保变更差异可被前端正确展示。
+
+### 9.2 覆盖场景
 
 | 编号 | 资源类型 | 操作 | 触发 API | 校验重点 |
 |------|----------|------|----------|----------|
 | OL-DIFF-001 | `entity_type` | `update` | `PATCH /open-api/v1/entity-types/{type_name}` | `diff_keys` 包含变更的字段 |
 | OL-DIFF-002 | `route` | `update` | `PUT /open-api/v1/global-route-rules` | `diff_keys` 包含 `rules`；`before` 与 `after` 分别对应清空与写入后的 Global 路由表 |
 
-### 8.3 数据准备
+### 9.3 数据准备
 
 - `OL-DIFF-002` 需要先创建 `provider` 与 `cluster`，再使用 `ResetGlobalRouteRules` 将 Global 路由表置空作为 `before` 状态，最后调用 `SetGlobalRouteRules` 写入一条规则作为 `after` 状态。
 
-### 8.4 校验点
+### 9.4 校验点
 
 - `change_summary` 非空且包含 `before`、`after`、`diff_keys`。
 - `diff_keys` 数组中包含预期变更的字段名。
@@ -364,27 +385,27 @@ resource_type=entity_type&action=create&page=2&page_size=2
 
 ---
 
-## 9. 溯源字段记录（issue #127）
+## 10. 溯源字段记录（issue #127）
 
-### 9.1 设计思路
+### 10.1 设计思路
 
 验证操作日志正确记录 `user_agent` 与 `client_ip` 溯源字段，满足审计合规要求（能回答"谁、从哪发起"）。
 
-### 9.2 覆盖场景
+### 10.2 覆盖场景
 
 | 编号 | 场景 | 触发 API | 校验重点 |
 |------|------|----------|----------|
 | OL-TRACE-001 | 记录 User-Agent | `POST /open-api/v1/entity-types` | `user_agent` 非空，与请求 `User-Agent` 头一致 |
 | OL-TRACE-001 | 记录真实来源 IP | `POST /open-api/v1/entity-types` | `client_ip` 非空，回退自 `RemoteAddr`/`X-Forwarded-For` |
 
-### 9.3 校验点
+### 10.3 校验点
 
 - `user_agent` 应记录请求的 `User-Agent` 头（修复前恒为空）。
 - `client_ip` 优先取自定义 `ClientIp` 头（兼容既有调用方），否则回退 `X-Forwarded-For` 首段，最后回退 `RemoteAddr` 去端口。
 
 ---
 
-## 10. 工具辅助函数
+## 11. 工具辅助函数
 
 集成测试在 `testutil` 中新增/使用以下辅助函数：
 
@@ -394,7 +415,7 @@ resource_type=entity_type&action=create&page=2&page_size=2
 - `SetGlobalRouteRules(rules []interface{}) error`：设置 Global 路由表。
 - `SimpleRouteRule(name, clusterName string) map[string]interface{}`：构造一条最简单的 Global 路由规则。
 
-## 11. 注意事项
+## 12. 注意事项
 
 1. 操作日志为异步批量落库，默认 5 秒 flush 一次；测试使用轮询而非固定 sleep 等待日志出现。
 2. 不同测试用例共享同一 SQLite 数据库，但每个用例使用唯一资源 ID / 名称，避免相互干扰。
