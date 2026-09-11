@@ -68,7 +68,7 @@ func EntityDeleteAction(req *http.Request) (interface{}, error) {
 		return nil, err
 	}
 	if len(apiKeys) > 0 {
-		return nil, xerror.WrapParamErrorWithMsg(fmt.Sprintf("cannot delete entity with associated api-keys"))
+		return nil, xerror.WrapParamErrorWithMsg("%s", fmt.Sprintf("cannot delete entity with associated api-keys"))
 	}
 
 	return nil, container.EntityManager.DeleteEntity(req.Context(), &entity.EntityFilter{

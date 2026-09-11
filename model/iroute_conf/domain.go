@@ -217,7 +217,7 @@ func (m *DomainManager) DeleteDomain(ctx context.Context, product *ibasic.Produc
 		return err
 	}
 	if dbui != nil {
-		err = xerror.WrapDependentUnReadyErrorWithMsg(dbui.String())
+		err = xerror.WrapDependentUnReadyErrorWithMsg("%s", dbui.String())
 		m.recordDomainOperation(ctx, string(ioperlog.ActionDelete), domain.Name, domain.Name, strconv.FormatInt(product.ID, 10), domainToMap(domain), nil, err)
 		return err
 	}

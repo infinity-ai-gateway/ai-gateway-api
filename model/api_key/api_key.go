@@ -606,7 +606,7 @@ func (rppm *APIKeyManager) CreateAPIKey(ctx context.Context,
 		}
 
 		if len(list) > 0 {
-			return xerror.WrapParamErrorWithMsg(fmt.Sprintf("Duplicate id with product:%s", *param.ProductName))
+			return xerror.WrapParamErrorWithMsg("%s", fmt.Sprintf("Duplicate id with product:%s", *param.ProductName))
 		}
 
 		// Check if entity_id exists
@@ -616,7 +616,7 @@ func (rppm *APIKeyManager) CreateAPIKey(ctx context.Context,
 				return err
 			}
 			if entity == nil {
-				return xerror.WrapParamErrorWithMsg(fmt.Sprintf("Entity not found: %s", *param.EntityID))
+				return xerror.WrapParamErrorWithMsg("%s", fmt.Sprintf("Entity not found: %s", *param.EntityID))
 			}
 		}
 
@@ -630,7 +630,7 @@ func (rppm *APIKeyManager) CreateAPIKey(ctx context.Context,
 				return err
 			}
 			if len(tokens) > 1 {
-				return xerror.WrapDirtyDataErrorWithMsg(fmt.Sprintf("API-Key-Token:%s", *param.Key))
+				return xerror.WrapDirtyDataErrorWithMsg("%s", fmt.Sprintf("API-Key-Token:%s", *param.Key))
 			}
 
 			existingKeys, err := rppm.storager.FetchAPIKeyList(ctx, &APIKeyFilter{Key: param.Key})

@@ -79,7 +79,7 @@ func APIKeyUpdateProcess(ctx context.Context, param *api_key.APIKeyParam, produc
 			return nil, err
 		}
 		if entity == nil {
-			return nil, xerror.WrapParamErrorWithMsg(fmt.Sprintf("Entity not found: %s", *param.EntityID))
+			return nil, xerror.WrapParamErrorWithMsg("%s", fmt.Sprintf("Entity not found: %s", *param.EntityID))
 		}
 	}
 

@@ -543,7 +543,7 @@ func (cm *ClusterManager) CreateCluster(ctx context.Context, product *ibasic.Pro
 			switch oneSubCluster.Role {
 			case ProductPoolRoleEPP:
 				if subClusterCount != 1 {
-					return xerror.WrapParamErrorWithMsg(fmt.Sprintf("subcluster is EPP, then must be one subcluster"))
+					return xerror.WrapParamErrorWithMsg("%s", fmt.Sprintf("subcluster is EPP, then must be one subcluster"))
 				}
 			}
 		}
@@ -809,7 +809,7 @@ func (cm *ClusterManager) UpdateCluster(ctx context.Context, product *ibasic.Pro
 			switch oneSubCluster.Role {
 			case ProductPoolRoleEPP:
 				if subClusterCount != 1 {
-					return xerror.WrapParamErrorWithMsg(fmt.Sprintf("subcluster is EPP, then must be one subcluster"))
+					return xerror.WrapParamErrorWithMsg("%s", fmt.Sprintf("subcluster is EPP, then must be one subcluster"))
 				}
 			}
 		}

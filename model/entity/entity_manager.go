@@ -658,10 +658,10 @@ func (m *EntityManager) checkEntityLevel(ctx context.Context, entityType string,
 		return err
 	}
 	if entityTypeInfo == nil {
-		return xerror.WrapParamErrorWithMsg("entity type not found: " + entityType)
+		return xerror.WrapParamErrorWithMsg("%s", "entity type not found: "+entityType)
 	}
 	if entityTypeInfo.Level == nil {
-		return xerror.WrapParamErrorWithMsg("entity type level not set: " + entityType)
+		return xerror.WrapParamErrorWithMsg("%s", "entity type level not set: "+entityType)
 	}
 
 	parentEntity, err := m.storager.FetchEntity(ctx, &EntityFilter{EntityID: &parentID})
@@ -669,10 +669,10 @@ func (m *EntityManager) checkEntityLevel(ctx context.Context, entityType string,
 		return err
 	}
 	if parentEntity == nil {
-		return xerror.WrapParamErrorWithMsg("parent entity not found: " + parentID)
+		return xerror.WrapParamErrorWithMsg("%s", "parent entity not found: "+parentID)
 	}
 	if parentEntity.Type == nil {
-		return xerror.WrapParamErrorWithMsg("parent entity type not set: " + parentID)
+		return xerror.WrapParamErrorWithMsg("%s", "parent entity type not set: "+parentID)
 	}
 
 	parentEntityTypeInfo, err := m.entityTypeStorager.FetchEntityType(ctx, &EntityTypeFilter{TypeName: parentEntity.Type})
@@ -680,14 +680,14 @@ func (m *EntityManager) checkEntityLevel(ctx context.Context, entityType string,
 		return err
 	}
 	if parentEntityTypeInfo == nil {
-		return xerror.WrapParamErrorWithMsg("parent entity type not found: " + *parentEntity.Type)
+		return xerror.WrapParamErrorWithMsg("%s", "parent entity type not found: "+*parentEntity.Type)
 	}
 	if parentEntityTypeInfo.Level == nil {
-		return xerror.WrapParamErrorWithMsg("parent entity type level not set: " + *parentEntity.Type)
+		return xerror.WrapParamErrorWithMsg("%s", "parent entity type level not set: "+*parentEntity.Type)
 	}
 
 	if *entityTypeInfo.Level <= *parentEntityTypeInfo.Level {
-		return xerror.WrapParamErrorWithMsg(fmt.Sprintf("entity type level (%d) must be higher than parent entity type level (%d)",
+		return xerror.WrapParamErrorWithMsg("%s", fmt.Sprintf("entity type level (%d) must be higher than parent entity type level (%d)",
 			*entityTypeInfo.Level, *parentEntityTypeInfo.Level))
 	}
 
