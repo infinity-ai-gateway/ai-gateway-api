@@ -341,7 +341,7 @@ func (m *RouteRulesManager) validateRouteRules(param *shared.RouteRulesParam) er
 			return xerror.WrapParamErrorWithMsg("rule name is required")
 		}
 		if _, ok := nameSet[*rule.Name]; ok {
-			return xerror.WrapParamErrorWithMsg(fmt.Sprintf("duplicate rule name: %s", *rule.Name))
+			return xerror.WrapParamErrorWithMsg("%s", fmt.Sprintf("duplicate rule name: %s", *rule.Name))
 		}
 		nameSet[*rule.Name] = struct{}{}
 

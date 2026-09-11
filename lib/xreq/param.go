@@ -89,7 +89,7 @@ func ValidateData(data interface{}, lang ut.Translator) error {
 		if lang == nil {
 			lang = defaultTrans
 		}
-		return xerror.WrapParamErrorWithMsg(validationErrors[0].Translate(lang))
+		return xerror.WrapParamErrorWithMsg("%s", validationErrors[0].Translate(lang))
 	}
 
 	return xerror.WrapParamError(err)

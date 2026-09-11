@@ -108,7 +108,7 @@ func WrapRecordNotExist(topic ...string) error {
 	if len(topic) == 1 {
 		msg = topic[0] + " " + msg
 	}
-	return errors.Wrap(fmt.Errorf(msg), etNullData)
+	return errors.Wrap(fmt.Errorf("%s", msg), etNullData)
 }
 
 // WrapRecordExisted Record Existed
@@ -118,7 +118,7 @@ func WrapRecordExisted(topic ...string) error {
 	if len(topic) == 1 {
 		msg = topic[0] + " " + msg
 	}
-	return errors.Wrap(fmt.Errorf(msg), etExistedData)
+	return errors.Wrap(fmt.Errorf("%s", msg), etExistedData)
 }
 
 // WrapDuplicateData Duplicate Data
@@ -127,7 +127,7 @@ func WrapDuplicateData(topic ...string) error {
 	if len(topic) == 1 {
 		msg = topic[0] + " " + msg
 	}
-	return errors.Wrap(fmt.Errorf(msg), etDuplicateData)
+	return errors.Wrap(fmt.Errorf("%s", msg), etDuplicateData)
 }
 
 // WrapDuplicateDataErrorWithMsg Just Service layout invoke

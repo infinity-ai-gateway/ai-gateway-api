@@ -60,15 +60,15 @@ func ListAction(req *http.Request) (interface{}, error) {
 	}
 
 	if listReq.Page != nil && *listReq.Page <= 0 {
-		return nil, xerror.WrapParamErrorWithMsg(fmt.Sprintf("page must be > 0, got %d", *listReq.Page))
+		return nil, xerror.WrapParamErrorWithMsg("%s", fmt.Sprintf("page must be > 0, got %d", *listReq.Page))
 	}
 
 	if listReq.PageSize != nil && (*listReq.PageSize <= 0 || *listReq.PageSize > 100) {
-		return nil, xerror.WrapParamErrorWithMsg(fmt.Sprintf("page_size must be between 1 and 100, got %d", *listReq.PageSize))
+		return nil, xerror.WrapParamErrorWithMsg("%s", fmt.Sprintf("page_size must be between 1 and 100, got %d", *listReq.PageSize))
 	}
 
 	if listReq.EntityID != nil && len(*listReq.EntityID) > 64 {
-		return nil, xerror.WrapParamErrorWithMsg(fmt.Sprintf("entity_id must be <= 64 characters, got %d", len(*listReq.EntityID)))
+		return nil, xerror.WrapParamErrorWithMsg("%s", fmt.Sprintf("entity_id must be <= 64 characters, got %d", len(*listReq.EntityID)))
 	}
 
 	var page, pageSize int
