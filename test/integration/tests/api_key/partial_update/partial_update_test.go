@@ -160,6 +160,77 @@ func TestAPIKey_PartialUpdate(t *testing.T) {
 		assert.InDelta(t, float64(0), balance["used"], 0.00001)
 	})
 
+	t.Run("AK-5-006 部分更新省略 models/subnet 保持原值（issue #151 回归）", func(t *testing.T) {
+		// 创建时显式指定 models/subnet 白名单
+		createResp, err := testutil.GetClient().Post("/open-api/v1/api-keys", map[string]interface{}{
+			"description": "issue151-preserve-key",
+			"models":      []string{"controlled-model-a"},
+			"subnet":      []string{"10.0.0.0/24"},
+		})
+		if err != nil {
+			t.Fatalf("create api-key failed: %v", err)
+		}
+		testutil.AssertSuccess(t, createResp)
+		id, err := testutil.GetDataField(createResp, "id")
+		if err != nil {
+			t.Fatalf("get id: %v", err)
+		}
+		apiKeyID := id.(string)
+		defer testutil.DeleteAPIKey(apiKeyID)
+
+		// PATCH 仅修改 description，省略 models/subnet
+		resp, err := testutil.GetClient().Patch("/open-api/v1/api-keys/"+apiKeyID, map[string]interface{}{
+			"description": "issue151-preserve-key-updated",
+		})
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+
+		// models/subnet 必须保持创建时的白名单，不得被重置为 ["*"]
+		detail, err := testutil.GetClient().Get("/open-api/v1/api-keys/" + apiKeyID)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, detail)
+		testutil.AssertDataFieldEquals(t, detail, "models", []interface{}{"controlled-model-a"})
+		testutil.AssertDataFieldEquals(t, detail, "subnet", []interface{}{"10.0.0.0/24"})
+	})
+
+	t.Run("AK-5-007 部分更新显式修改 models/subnet 生效", func(t *testing.T) {
+		createResp, err := testutil.GetClient().Post("/open-api/v1/api-keys", map[string]interface{}{
+			"description": "issue151-explicit-key",
+			"models":      []string{"controlled-model-a"},
+		})
+		if err != nil {
+			t.Fatalf("create api-key failed: %v", err)
+		}
+		testutil.AssertSuccess(t, createResp)
+		id, err := testutil.GetDataField(createResp, "id")
+		if err != nil {
+			t.Fatalf("get id: %v", err)
+		}
+		apiKeyID := id.(string)
+		defer testutil.DeleteAPIKey(apiKeyID)
+
+		resp, err := testutil.GetClient().Patch("/open-api/v1/api-keys/"+apiKeyID, map[string]interface{}{
+			"models": []string{"model-x", "model-y"},
+			"subnet": []string{"192.168.0.0/16"},
+		})
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+
+		detail, err := testutil.GetClient().Get("/open-api/v1/api-keys/" + apiKeyID)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, detail)
+		testutil.AssertDataFieldEquals(t, detail, "models", []interface{}{"model-x", "model-y"})
+		testutil.AssertDataFieldEquals(t, detail, "subnet", []interface{}{"192.168.0.0/16"})
+	})
+
 	t.Cleanup(func() {
 		testutil.DeleteAPIKey(apiKeyID)
 	})

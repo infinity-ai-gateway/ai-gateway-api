@@ -95,7 +95,7 @@ func (s *EntityStorager) UpdateEntity(ctx context.Context, filter *entity.Entity
 		return 0, err
 	}
 
-	data := entityDataToParam(param)
+	data := entityDataToParamForUpdate(param)
 	data.UpdatedAt = lib.PTimeNow()
 
 	return dao.TEntityUpdate(dbCtx, data, entityFilterToParam(filter))
@@ -144,17 +144,9 @@ func entityFilterToParam(filter *entity.EntityFilter) *dao.TEntityParam {
 }
 
 func entityDataToParam(param *entity.EntityParam) *dao.TEntityParam {
-	data := &dao.TEntityParam{
-		EntityID:          param.EntityID,
-		Name:              param.Name,
-		Type:              param.Type,
-		ParentID:          param.ParentID,
-		QuotaPlanID:       param.QuotaPlanID,
-		RateLimitPolicyID: param.RateLimitPolicyID,
-		RouteRulesID:      param.RouteRulesID,
-	}
+	data := entityBaseDataToParam(param)
 
-	// 转换 AllowModels 为 JSON 字符串
+	// 转换 AllowModels 为 JSON 字符串（创建省略时默认空数组）
 	if len(param.AllowModels) > 0 {
 		allowModelsJSON, _ := json.Marshal(param.AllowModels)
 		data.AllowModels = lib.PString(string(allowModelsJSON))
@@ -162,7 +154,7 @@ func entityDataToParam(param *entity.EntityParam) *dao.TEntityParam {
 		data.AllowModels = lib.PString("[]")
 	}
 
-	// 转换 BlockModels 为 JSON 字符串
+	// 转换 BlockModels 为 JSON 字符串（创建省略时默认空数组）
 	if len(param.BlockModels) > 0 {
 		blockModelsJSON, _ := json.Marshal(param.BlockModels)
 		data.BlockModels = lib.PString(string(blockModelsJSON))
@@ -171,6 +163,35 @@ func entityDataToParam(param *entity.EntityParam) *dao.TEntityParam {
 	}
 
 	return data
+}
+
+// entityDataToParamForUpdate Update 专用转换：省略的 allow_models/block_models
+// 保持 nil，交由 DAO nil-skip 跳过该列，保留原值（部分更新语义）。
+func entityDataToParamForUpdate(param *entity.EntityParam) *dao.TEntityParam {
+	data := entityBaseDataToParam(param)
+
+	if len(param.AllowModels) > 0 {
+		allowModelsJSON, _ := json.Marshal(param.AllowModels)
+		data.AllowModels = lib.PString(string(allowModelsJSON))
+	}
+	if len(param.BlockModels) > 0 {
+		blockModelsJSON, _ := json.Marshal(param.BlockModels)
+		data.BlockModels = lib.PString(string(blockModelsJSON))
+	}
+
+	return data
+}
+
+func entityBaseDataToParam(param *entity.EntityParam) *dao.TEntityParam {
+	return &dao.TEntityParam{
+		EntityID:          param.EntityID,
+		Name:              param.Name,
+		Type:              param.Type,
+		ParentID:          param.ParentID,
+		QuotaPlanID:       param.QuotaPlanID,
+		RateLimitPolicyID: param.RateLimitPolicyID,
+		RouteRulesID:      param.RouteRulesID,
+	}
 }
 
 func entityParamToData(one *dao.TEntity) *entity.EntityParam {

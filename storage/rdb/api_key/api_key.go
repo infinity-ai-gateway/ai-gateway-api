@@ -185,19 +185,16 @@ func (rpps *APIKeyStorager) UpdateAPIKey(ctx context.Context, filter *api_key.AP
 
 	data := newAPIKeyDataToParam(param)
 
-	models := []string{"*"}
+	// Omitted models/subnet stay nil so the DAO layer skips the columns and
+	// the existing values are preserved (partial update semantics).
 	if len(param.Models) > 0 {
-		models = param.Models
+		modelsValue, _ := json.Marshal(param.Models)
+		data.AllowedModels = lib.PString(string(modelsValue))
 	}
-	modelsValue, _ := json.Marshal(models)
-	data.AllowedModels = lib.PString(string(modelsValue))
-
-	subnet := []string{"*"}
 	if len(param.Subnet) > 0 {
-		subnet = param.Subnet
+		subnetValue, _ := json.Marshal(param.Subnet)
+		data.Subnet = lib.PString(string(subnetValue))
 	}
-	subnetValue, _ := json.Marshal(subnet)
-	data.Subnet = lib.PString(string(subnetValue))
 
 	return dao.TAPIKeyUpdate(dbCtx, data, newAPIKeyFilterToParam(filter))
 }
