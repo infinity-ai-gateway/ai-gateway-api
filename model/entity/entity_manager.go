@@ -231,29 +231,36 @@ func (m *EntityManager) FetchEntityList(ctx context.Context, filter *EntityFilte
 
 // UpdateEntity 更新 Entity
 func (m *EntityManager) UpdateEntity(ctx context.Context, filter *EntityFilter, param *EntityParam) (int64, error) {
+	// 入口只读查询目标记录，用于前置失败分支的审计日志身份与 before 快照；
+	// 事务内仍会重新查询以保证一致性，并发语义不变。
+	existing, fetchErr := m.storager.FetchEntityList(ctx, filter)
+	var oldEntity *EntityParam
+	if fetchErr == nil && len(existing) > 0 {
+		oldEntity = existing[0]
+	}
+
 	if param.ParentID != nil && *param.ParentID != "" && param.Type != nil && m.entityTypeStorager != nil {
 		if err := m.checkEntityLevel(ctx, *param.Type, *param.ParentID); err != nil {
-			entityID, entityName, parentID := entityParamIdentifiers(param)
-			m.recordEntityOperation(ctx, string(ioperlog.ActionUpdate), entityID, entityName, parentID, entityParamToMap(param), nil, err)
+			entityID, entityName, parentID := resolveEntityIdentifiers(filter, param, oldEntity)
+			m.recordEntityOperation(ctx, string(ioperlog.ActionUpdate), entityID, entityName, parentID, entityParamToMap(oldEntity), entityParamToMap(param), err)
 			return 0, err
 		}
 	} else if param.ParentID != nil && *param.ParentID != "" && m.entityTypeStorager != nil {
-		list, err := m.storager.FetchEntityList(ctx, filter)
-		if err != nil {
-			entityID, entityName, parentID := entityParamIdentifiers(param)
-			m.recordEntityOperation(ctx, string(ioperlog.ActionUpdate), entityID, entityName, parentID, entityParamToMap(param), nil, err)
-			return 0, err
+		if fetchErr != nil {
+			entityID, entityName, parentID := resolveEntityIdentifiers(filter, param, nil)
+			m.recordEntityOperation(ctx, string(ioperlog.ActionUpdate), entityID, entityName, parentID, entityParamToMap(oldEntity), entityParamToMap(param), fetchErr)
+			return 0, fetchErr
 		}
-		if len(list) == 0 {
+		if len(existing) == 0 {
 			err := xerror.WrapRecordNotExist("Entity")
-			entityID, entityName, parentID := entityParamIdentifiers(param)
-			m.recordEntityOperation(ctx, string(ioperlog.ActionUpdate), entityID, entityName, parentID, entityParamToMap(param), nil, err)
+			entityID, entityName, parentID := resolveEntityIdentifiers(filter, param, nil)
+			m.recordEntityOperation(ctx, string(ioperlog.ActionUpdate), entityID, entityName, parentID, entityParamToMap(oldEntity), entityParamToMap(param), err)
 			return 0, err
 		}
-		if list[0].Type != nil {
-			if err := m.checkEntityLevel(ctx, *list[0].Type, *param.ParentID); err != nil {
-				entityID, entityName, parentID := entityParamIdentifiers(param)
-				m.recordEntityOperation(ctx, string(ioperlog.ActionUpdate), entityID, entityName, parentID, entityParamToMap(param), nil, err)
+		if existing[0].Type != nil {
+			if err := m.checkEntityLevel(ctx, *existing[0].Type, *param.ParentID); err != nil {
+				entityID, entityName, parentID := resolveEntityIdentifiers(filter, param, oldEntity)
+				m.recordEntityOperation(ctx, string(ioperlog.ActionUpdate), entityID, entityName, parentID, entityParamToMap(oldEntity), entityParamToMap(param), err)
 				return 0, err
 			}
 		}
@@ -262,7 +269,6 @@ func (m *EntityManager) UpdateEntity(ctx context.Context, filter *EntityFilter, 
 	var (
 		affected              int64
 		rateLimitKeysToDelete []string
-		oldEntity             *EntityParam
 	)
 	err := m.txn.AtomExecute(ctx, func(ctx context.Context) error {
 		var err error
@@ -738,6 +744,34 @@ func entityParamIdentifiers(param *EntityParam) (entityID, entityName, parentID 
 	}
 	if param.ParentID != nil {
 		parentID = *param.ParentID
+	}
+	return
+}
+
+// resolveEntityIdentifiers 解析审计日志资源身份，优先级：
+// 库中记录（oldEntity）> URI 寻址（filter）> 请求体（param）> 空串。
+// 修复 issue #155：前置校验失败时极简 body 无 id/name，不得记录空身份。
+func resolveEntityIdentifiers(filter *EntityFilter, param, old *EntityParam) (entityID, entityName, parentID string) {
+	if old != nil {
+		entityID, entityName, parentID = entityParamIdentifiers(old)
+		// parent_id 保留请求值（修改意图的一部分），库中为空时回退请求体
+		if _, _, pParent := entityParamIdentifiers(param); parentID == "" {
+			parentID = pParent
+		}
+		return
+	}
+	if filter != nil && filter.EntityID != nil {
+		entityID = *filter.EntityID
+	}
+	pID, pName, pParent := entityParamIdentifiers(param)
+	if entityID == "" {
+		entityID = pID
+	}
+	if pName != "" {
+		entityName = pName
+	}
+	if pParent != "" {
+		parentID = pParent
 	}
 	return
 }

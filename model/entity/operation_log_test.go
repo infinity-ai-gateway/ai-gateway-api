@@ -301,3 +301,73 @@ func TestEntityManager_DeleteEntity_RecordsFailedOperationLog(t *testing.T) {
 	assert.Equal(t, ioperlog.StatusFailed, entry.Status)
 	assert.Contains(t, entry.ErrorMsg, "delete constraint violation")
 }
+
+// issue #155：前置校验失败（极简 body，无 id/name）时，失败审计日志
+// 必须能从库中记录 / URI 寻址解析资源身份，不得为空串。
+func TestEntityManager_UpdateEntity_PreCheckFailureLogKeepsResourceIdentity(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("record exists: identity from db snapshot", func(t *testing.T) {
+		recorder := &fakeOperationLogRecorder{}
+
+		entityID := "entity-270"
+		entityName := "entity-old-name"
+		entityType := "tenant"
+
+		manager := NewEntityManager(&fakeTxn{}, &fakeEntityStorager{
+			listFn: func(ctx context.Context, filter *EntityFilter) ([]*EntityParam, error) {
+				return []*EntityParam{{EntityID: &entityID, Name: &entityName, Type: &entityType}}, nil
+			},
+			fetchFn: func(ctx context.Context, filter *EntityFilter) (*EntityParam, error) {
+				return nil, nil // parent entity not found
+			},
+		}, &fakeEntityTypeStorager{
+			fetchFn: func(ctx context.Context, filter *EntityTypeFilter) (*EntityTypeParam, error) {
+				return &EntityTypeParam{TypeName: &entityType, Level: lib.PInt(2)}, nil
+			},
+		}, &fakeSharedQuotaPlanStorager{}, &fakeSharedRateLimitPolicyStorager{}, &fakeRouteRulesStorager{}, nil)
+		manager.SetOperationLogManager(recorder)
+
+		// 极简 body：仅 parent_id，无 id/name（SC2101-TC046 场景）
+		_, err := manager.UpdateEntity(ctx, &EntityFilter{EntityID: &entityID}, &EntityParam{
+			ParentID: lib.PString("entity-888"),
+		})
+		require.Error(t, err)
+
+		require.Len(t, recorder.entries, 1)
+		entry := recorder.entries[0]
+		assert.Equal(t, string(ioperlog.ActionUpdate), entry.Action)
+		assert.Equal(t, entityID, entry.ResourceID)
+		assert.Equal(t, entityName, entry.ResourceName)
+		assert.Equal(t, "entity-888", entry.ResourceParentID)
+		assert.Equal(t, ioperlog.StatusFailed, entry.Status)
+		assert.Contains(t, entry.ErrorMsg, "parent entity not found")
+	})
+
+	t.Run("record not exist: identity falls back to uri filter", func(t *testing.T) {
+		recorder := &fakeOperationLogRecorder{}
+
+		entityID := "entity-404"
+
+		manager := NewEntityManager(&fakeTxn{}, &fakeEntityStorager{
+			listFn: func(ctx context.Context, filter *EntityFilter) ([]*EntityParam, error) {
+				return nil, nil
+			},
+		}, &fakeEntityTypeStorager{
+			fetchFn: func(ctx context.Context, filter *EntityTypeFilter) (*EntityTypeParam, error) {
+				return &EntityTypeParam{TypeName: lib.PString("tenant"), Level: lib.PInt(1)}, nil
+			},
+		}, &fakeSharedQuotaPlanStorager{}, &fakeSharedRateLimitPolicyStorager{}, &fakeRouteRulesStorager{}, nil)
+		manager.SetOperationLogManager(recorder)
+
+		_, err := manager.UpdateEntity(ctx, &EntityFilter{EntityID: &entityID}, &EntityParam{
+			ParentID: lib.PString("entity-888"),
+		})
+		require.Error(t, err)
+
+		require.Len(t, recorder.entries, 1)
+		entry := recorder.entries[0]
+		assert.Equal(t, entityID, entry.ResourceID)
+		assert.Equal(t, ioperlog.StatusFailed, entry.Status)
+	})
+}
