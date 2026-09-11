@@ -10,8 +10,7 @@ children = [
     { id = "AICluster.list", text = "AIClusterManage", allowed_roles = ["admin"] },
     { id = "ModelPrice.list", text = "ModelPriceManage", allowed_roles = ["admin"] },
     { id = "Provider.list", text = "ProviderManage", allowed_roles = ["admin"] },
-    { id = "certs.list", text = "CertificateManage", allowed_roles = ["admin"] },
-     { id = "EppPool.list", text = "EppPoolManage", allowed_roles = ["admin"] }
+    { id = "EppPool.list", text = "EppPoolManage", allowed_roles = ["admin"] }
 ]
 
 [[children]]
