@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xerror"
+	"github.com/rainway-ai-gateway/ai-gateway-api/model/ioperlog"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/itxn"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/quotacache"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/shared"
@@ -34,6 +35,7 @@ type EntityManager struct {
 	rateLimitPolicyStorager shared.RateLimitPolicyStorager
 	routeRulesStorager      shared.RouteRulesStorager
 	quotaCache              quotacache.QuotaCache
+	operationLogManager     ioperlog.OperationLogRecorder
 }
 
 // NewEntityManager 创建 Entity 管理器
@@ -54,30 +56,47 @@ func NewEntityManager(txn itxn.TxnStorager, storager EntityStorager,
 	}
 }
 
+// SetOperationLogManager injects the operation log recorder.
+func (m *EntityManager) SetOperationLogManager(manager ioperlog.OperationLogRecorder) {
+	m.operationLogManager = manager
+}
+
 // CreateEntity 创建 Entity
 func (m *EntityManager) CreateEntity(ctx context.Context, param *EntityParam) (int64, error) {
 	if param.Type != nil && m.entityTypeStorager != nil {
 		entityTypeInfo, err := m.entityTypeStorager.FetchEntityType(ctx, &EntityTypeFilter{TypeName: param.Type})
 		if err != nil {
+			entityID, entityName, parentID := entityParamIdentifiers(param)
+			m.recordEntityOperation(ctx, string(ioperlog.ActionCreate), entityID, entityName, parentID, nil, entityParamToMap(param), err)
 			return 0, err
 		}
 		if entityTypeInfo == nil {
-			return 0, xerror.WrapParamError(fmt.Errorf("entity type not found: %s", *param.Type))
+			err := xerror.WrapParamError(fmt.Errorf("entity type not found: %s", *param.Type))
+			entityID, entityName, parentID := entityParamIdentifiers(param)
+			m.recordEntityOperation(ctx, string(ioperlog.ActionCreate), entityID, entityName, parentID, nil, entityParamToMap(param), err)
+			return 0, err
 		}
 	}
 
 	if param.Name != nil && *param.Name != "" {
 		existing, err := m.storager.FetchEntity(ctx, &EntityFilter{Name: param.Name})
 		if err != nil {
+			entityID, entityName, parentID := entityParamIdentifiers(param)
+			m.recordEntityOperation(ctx, string(ioperlog.ActionCreate), entityID, entityName, parentID, nil, entityParamToMap(param), err)
 			return 0, err
 		}
 		if existing != nil {
-			return 0, xerror.WrapRecordExisted("Entity")
+			err := xerror.WrapRecordExisted("Entity")
+			entityID, entityName, parentID := entityParamIdentifiers(param)
+			m.recordEntityOperation(ctx, string(ioperlog.ActionCreate), entityID, entityName, parentID, nil, entityParamToMap(param), err)
+			return 0, err
 		}
 	}
 
 	if param.ParentID != nil && *param.ParentID != "" && param.Type != nil && m.entityTypeStorager != nil {
 		if err := m.checkEntityLevel(ctx, *param.Type, *param.ParentID); err != nil {
+			entityID, entityName, parentID := entityParamIdentifiers(param)
+			m.recordEntityOperation(ctx, string(ioperlog.ActionCreate), entityID, entityName, parentID, nil, entityParamToMap(param), err)
 			return 0, err
 		}
 	}
@@ -118,6 +137,8 @@ func (m *EntityManager) CreateEntity(ctx context.Context, param *EntityParam) (i
 		return nil
 	})
 	if err != nil {
+		entityID, entityName, parentID := entityParamIdentifiers(param)
+		m.recordEntityOperation(ctx, string(ioperlog.ActionCreate), entityID, entityName, parentID, nil, entityParamToMap(param), err)
 		return 0, err
 	}
 
@@ -134,6 +155,20 @@ func (m *EntityManager) CreateEntity(ctx context.Context, param *EntityParam) (i
 			}
 		}
 	}
+
+	entityName := ""
+	if param.Name != nil {
+		entityName = *param.Name
+	}
+	entityID := ""
+	if param.EntityID != nil {
+		entityID = *param.EntityID
+	}
+	parentID := ""
+	if param.ParentID != nil {
+		parentID = *param.ParentID
+	}
+	m.recordEntityOperation(ctx, string(ioperlog.ActionCreate), entityID, entityName, parentID, nil, entityParamToMap(param), nil)
 
 	return id, nil
 }
@@ -196,20 +231,36 @@ func (m *EntityManager) FetchEntityList(ctx context.Context, filter *EntityFilte
 
 // UpdateEntity 更新 Entity
 func (m *EntityManager) UpdateEntity(ctx context.Context, filter *EntityFilter, param *EntityParam) (int64, error) {
+	// 入口只读查询目标记录，用于前置失败分支的审计日志身份与 before 快照；
+	// 事务内仍会重新查询以保证一致性，并发语义不变。
+	existing, fetchErr := m.storager.FetchEntityList(ctx, filter)
+	var oldEntity *EntityParam
+	if fetchErr == nil && len(existing) > 0 {
+		oldEntity = existing[0]
+	}
+
 	if param.ParentID != nil && *param.ParentID != "" && param.Type != nil && m.entityTypeStorager != nil {
 		if err := m.checkEntityLevel(ctx, *param.Type, *param.ParentID); err != nil {
+			entityID, entityName, parentID := resolveEntityIdentifiers(filter, param, oldEntity)
+			m.recordEntityOperation(ctx, string(ioperlog.ActionUpdate), entityID, entityName, parentID, entityParamToMap(oldEntity), entityParamToMap(param), err)
 			return 0, err
 		}
 	} else if param.ParentID != nil && *param.ParentID != "" && m.entityTypeStorager != nil {
-		list, err := m.storager.FetchEntityList(ctx, filter)
-		if err != nil {
+		if fetchErr != nil {
+			entityID, entityName, parentID := resolveEntityIdentifiers(filter, param, nil)
+			m.recordEntityOperation(ctx, string(ioperlog.ActionUpdate), entityID, entityName, parentID, entityParamToMap(oldEntity), entityParamToMap(param), fetchErr)
+			return 0, fetchErr
+		}
+		if len(existing) == 0 {
+			err := xerror.WrapRecordNotExist("Entity")
+			entityID, entityName, parentID := resolveEntityIdentifiers(filter, param, nil)
+			m.recordEntityOperation(ctx, string(ioperlog.ActionUpdate), entityID, entityName, parentID, entityParamToMap(oldEntity), entityParamToMap(param), err)
 			return 0, err
 		}
-		if len(list) == 0 {
-			return 0, xerror.WrapRecordNotExist("Entity")
-		}
-		if list[0].Type != nil {
-			if err := m.checkEntityLevel(ctx, *list[0].Type, *param.ParentID); err != nil {
+		if existing[0].Type != nil {
+			if err := m.checkEntityLevel(ctx, *existing[0].Type, *param.ParentID); err != nil {
+				entityID, entityName, parentID := resolveEntityIdentifiers(filter, param, oldEntity)
+				m.recordEntityOperation(ctx, string(ioperlog.ActionUpdate), entityID, entityName, parentID, entityParamToMap(oldEntity), entityParamToMap(param), err)
 				return 0, err
 			}
 		}
@@ -231,6 +282,7 @@ func (m *EntityManager) UpdateEntity(ctx context.Context, filter *EntityFilter, 
 		}
 
 		one := list[0]
+		oldEntity = one
 
 		if param.QuotaPlan != nil && m.quotaPlanStorager != nil {
 			if one.QuotaPlanID != nil {
@@ -288,12 +340,34 @@ func (m *EntityManager) UpdateEntity(ctx context.Context, filter *EntityFilter, 
 		return err
 	})
 	if err != nil {
+		entityID, entityName, parentID := entityParamIdentifiers(param)
+		if oldEntity != nil {
+			entityID, entityName, parentID = entityParamIdentifiers(oldEntity)
+		}
+		m.recordEntityOperation(ctx, string(ioperlog.ActionUpdate), entityID, entityName, parentID, entityParamToMap(oldEntity), entityParamToMap(param), err)
 		return affected, err
 	}
 
 	if len(rateLimitKeysToDelete) > 0 {
 		m.cleanupRedisKeys(ctx, "", rateLimitKeysToDelete)
 	}
+
+	entityID := ""
+	entityName := ""
+	parentID := ""
+	if oldEntity != nil {
+		if oldEntity.EntityID != nil {
+			entityID = *oldEntity.EntityID
+		}
+		if oldEntity.Name != nil {
+			entityName = *oldEntity.Name
+		}
+		if oldEntity.ParentID != nil {
+			parentID = *oldEntity.ParentID
+		}
+	}
+	m.recordEntityOperation(ctx, string(ioperlog.ActionUpdate), entityID, entityName, parentID, entityParamToMap(oldEntity), entityParamToMap(param), nil)
+
 	return affected, nil
 }
 
@@ -302,6 +376,7 @@ func (m *EntityManager) DeleteEntity(ctx context.Context, filter *EntityFilter) 
 	var (
 		quotaKey      string
 		rateLimitKeys []string
+		oldEntity     *EntityParam
 	)
 
 	err := m.txn.AtomExecute(ctx, func(ctx context.Context) error {
@@ -314,6 +389,7 @@ func (m *EntityManager) DeleteEntity(ctx context.Context, filter *EntityFilter) 
 		}
 
 		one := list[0]
+		oldEntity = one
 
 		if one.EntityID != nil && *one.EntityID != "" {
 			quotaKey = *one.EntityID
@@ -358,11 +434,30 @@ func (m *EntityManager) DeleteEntity(ctx context.Context, filter *EntityFilter) 
 		return m.storager.DeleteEntity(ctx, filter)
 	})
 	if err != nil {
+		entityID, entityName, parentID := entityParamIdentifiers(oldEntity)
+		m.recordEntityOperation(ctx, string(ioperlog.ActionDelete), entityID, entityName, parentID, entityParamToMap(oldEntity), nil, err)
 		return err
 	}
 
 	// 事务提交成功后清理 Redis Key
 	m.cleanupRedisKeys(ctx, quotaKey, rateLimitKeys)
+
+	entityID := ""
+	entityName := ""
+	parentID := ""
+	if oldEntity != nil {
+		if oldEntity.EntityID != nil {
+			entityID = *oldEntity.EntityID
+		}
+		if oldEntity.Name != nil {
+			entityName = *oldEntity.Name
+		}
+		if oldEntity.ParentID != nil {
+			parentID = *oldEntity.ParentID
+		}
+	}
+	m.recordEntityOperation(ctx, string(ioperlog.ActionDelete), entityID, entityName, parentID, entityParamToMap(oldEntity), nil, nil)
+
 	return nil
 }
 
@@ -569,10 +664,10 @@ func (m *EntityManager) checkEntityLevel(ctx context.Context, entityType string,
 		return err
 	}
 	if entityTypeInfo == nil {
-		return xerror.WrapParamErrorWithMsg("entity type not found: " + entityType)
+		return xerror.WrapParamErrorWithMsg("%s", "entity type not found: "+entityType)
 	}
 	if entityTypeInfo.Level == nil {
-		return xerror.WrapParamErrorWithMsg("entity type level not set: " + entityType)
+		return xerror.WrapParamErrorWithMsg("%s", "entity type level not set: "+entityType)
 	}
 
 	parentEntity, err := m.storager.FetchEntity(ctx, &EntityFilter{EntityID: &parentID})
@@ -580,10 +675,10 @@ func (m *EntityManager) checkEntityLevel(ctx context.Context, entityType string,
 		return err
 	}
 	if parentEntity == nil {
-		return xerror.WrapParamErrorWithMsg("parent entity not found: " + parentID)
+		return xerror.WrapParamErrorWithMsg("%s", "parent entity not found: "+parentID)
 	}
 	if parentEntity.Type == nil {
-		return xerror.WrapParamErrorWithMsg("parent entity type not set: " + parentID)
+		return xerror.WrapParamErrorWithMsg("%s", "parent entity type not set: "+parentID)
 	}
 
 	parentEntityTypeInfo, err := m.entityTypeStorager.FetchEntityType(ctx, &EntityTypeFilter{TypeName: parentEntity.Type})
@@ -591,14 +686,14 @@ func (m *EntityManager) checkEntityLevel(ctx context.Context, entityType string,
 		return err
 	}
 	if parentEntityTypeInfo == nil {
-		return xerror.WrapParamErrorWithMsg("parent entity type not found: " + *parentEntity.Type)
+		return xerror.WrapParamErrorWithMsg("%s", "parent entity type not found: "+*parentEntity.Type)
 	}
 	if parentEntityTypeInfo.Level == nil {
-		return xerror.WrapParamErrorWithMsg("parent entity type level not set: " + *parentEntity.Type)
+		return xerror.WrapParamErrorWithMsg("%s", "parent entity type level not set: "+*parentEntity.Type)
 	}
 
 	if *entityTypeInfo.Level <= *parentEntityTypeInfo.Level {
-		return xerror.WrapParamErrorWithMsg(fmt.Sprintf("entity type level (%d) must be higher than parent entity type level (%d)",
+		return xerror.WrapParamErrorWithMsg("%s", fmt.Sprintf("entity type level (%d) must be higher than parent entity type level (%d)",
 			*entityTypeInfo.Level, *parentEntityTypeInfo.Level))
 	}
 
@@ -635,4 +730,48 @@ func (a *entityStoragerAdapter) FetchEntity(ctx context.Context, filter *shared.
 		Name: entity.Name,
 		Type: entity.Type,
 	}, nil
+}
+
+func entityParamIdentifiers(param *EntityParam) (entityID, entityName, parentID string) {
+	if param == nil {
+		return "", "", ""
+	}
+	if param.EntityID != nil {
+		entityID = *param.EntityID
+	}
+	if param.Name != nil {
+		entityName = *param.Name
+	}
+	if param.ParentID != nil {
+		parentID = *param.ParentID
+	}
+	return
+}
+
+// resolveEntityIdentifiers 解析审计日志资源身份，优先级：
+// 库中记录（oldEntity）> URI 寻址（filter）> 请求体（param）> 空串。
+// 修复 issue #155：前置校验失败时极简 body 无 id/name，不得记录空身份。
+func resolveEntityIdentifiers(filter *EntityFilter, param, old *EntityParam) (entityID, entityName, parentID string) {
+	if old != nil {
+		entityID, entityName, parentID = entityParamIdentifiers(old)
+		// parent_id 保留请求值（修改意图的一部分），库中为空时回退请求体
+		if _, _, pParent := entityParamIdentifiers(param); parentID == "" {
+			parentID = pParent
+		}
+		return
+	}
+	if filter != nil && filter.EntityID != nil {
+		entityID = *filter.EntityID
+	}
+	pID, pName, pParent := entityParamIdentifiers(param)
+	if entityID == "" {
+		entityID = pID
+	}
+	if pName != "" {
+		entityName = pName
+	}
+	if pParent != "" {
+		parentID = pParent
+	}
+	return
 }

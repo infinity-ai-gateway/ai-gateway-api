@@ -1,7 +1,22 @@
+// Copyright(c) 2026 The Rainway AI Gateway (壬远AI网关) Authors.
+//
+//Licensed under the Apache License, Version 2.0 (the "License");
+//you may not use this file except in compliance with the License.
+//You may obtain a copy of the License at
+//
+//http://www.apache.org/licenses/LICENSE-2.0
+//
+//Unless required by applicable law or agreed to in writing, software
+//distributed under the License is distributed on an "AS IS" BASIS,
+//WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//See the License for the specific language governing permissions and
+//limitations under the License.
+
 package innerapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -34,6 +49,8 @@ func TestInnerAPI_Schema(t *testing.T) {
 	t.Run("mod_body_process", testModBodyProcessSchema)
 	t.Run("rate_limit_policy", testRateLimitPolicySchema)
 	t.Run("ai_route", testAIRouteSchema)
+	t.Run("epp_data", testEppDataSchema)
+	t.Run("server_data_conf_epp", testServerDataConfEppSchema)
 }
 
 // setupCluster 创建一个测试集群并返回名称
@@ -671,4 +688,172 @@ func testAIRouteSchema(t *testing.T) {
 		testutil.DeleteAPIKey(apiKeyID)
 		testutil.DeleteCluster(clusterName)
 	})
+}
+
+// ---------- epp_data ----------
+
+// patchEppPoolForSchema 为 EPP schema 用例配置独立的实例池布局（EPP 池为单例）。
+func patchEppPoolForSchema(t *testing.T) {
+	resp, err := testutil.GetClient().Patch("/open-api/v1/epp-pool", map[string]interface{}{
+		"groups": []interface{}{
+			map[string]interface{}{
+				"name": "g1",
+				"instances": []interface{}{
+					map[string]interface{}{"id": "epp-a", "host": "10.0.0.1", "port": 9002},
+					map[string]interface{}{"id": "epp-b", "host": "10.0.0.2", "port": 9002},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.ErrNum, resp.ErrMsg)
+}
+
+// createEPPClusterForSchema 创建一个 EPP 模式集群（自带 provider），返回名称。
+func createEPPClusterForSchema(t *testing.T, eppConfig map[string]interface{}) string {
+	t.Helper()
+	providerName := testutil.UniqueProviderName()
+	_, err := testutil.CreateProvider(providerName)
+	require.NoError(t, err)
+
+	clusterName := testutil.UniqueClusterName()
+	resp, err := testutil.GetClient().Post("/open-api/v1/clusters", map[string]interface{}{
+		"name":         clusterName,
+		"balance_mode": "EPP",
+		"epp_config":   eppConfig,
+		"llm_config": map[string]interface{}{
+			"models":   []string{"deepseek-chat"},
+			"provider": providerName,
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.ErrNum, resp.ErrMsg)
+	return clusterName
+}
+
+func testEppDataSchema(t *testing.T) {
+	patchEppPoolForSchema(t)
+
+	clusterName := createEPPClusterForSchema(t, map[string]interface{}{
+		"scheduling_profile": "throughput-first",
+		"flow_control": map[string]interface{}{
+			"max_requests": 100,
+			"queue_ttl":    30,
+		},
+	})
+	t.Cleanup(func() { testutil.DeleteCluster(clusterName) })
+
+	resp, err := testutil.GetClient().Get("/inner-api/v1/configs/epp_data/config")
+	require.NoError(t, err)
+	testutil.AssertSuccess(t, resp)
+	testutil.AssertSchema(t, resp, EppDataSchema)
+
+	// 定向断言（epp-data.md §3.2/§3.3）：
+	// assignment 含该 cluster 条目且 primary 非空；epp_config 编译产物关键字段存在。
+	var payload map[string]interface{}
+	require.NoError(t, json.Unmarshal(resp.Data, &payload))
+	config := payload["Config"].(map[string]interface{})
+
+	assignment := config["assignment"].(map[string]interface{})
+	entry, ok := assignment[clusterName].(map[string]interface{})
+	require.True(t, ok, "assignment should contain cluster %s", clusterName)
+	primary, ok := entry["primary"].(string)
+	require.True(t, ok, "assignment.primary should be a string")
+	require.NotEmpty(t, primary)
+
+	eppConfig := config["epp_config"].(map[string]interface{})
+	compiled, ok := eppConfig[clusterName].(map[string]interface{})
+	require.True(t, ok, "epp_config should contain cluster %s", clusterName)
+	plugins, ok := compiled["plugins"].([]interface{})
+	require.True(t, ok, "compiled epp_config.plugins should be an array")
+	require.NotEmpty(t, plugins)
+	require.Contains(t, compiled, "featureGates")
+	require.Contains(t, compiled, "schedulingProfiles")
+	require.Contains(t, compiled, "dataLayer")
+}
+
+// ---------- server_data_conf EPP 导出 ----------
+
+func testServerDataConfEppSchema(t *testing.T) {
+	patchEppPoolForSchema(t)
+
+	eppClusterName := createEPPClusterForSchema(t, map[string]interface{}{
+		"scheduling_profile": "balanced",
+	})
+	wrrClusterName := testutil.UniqueClusterName()
+	{
+		providerName := testutil.UniqueProviderName()
+		_, err := testutil.CreateProvider(providerName)
+		require.NoError(t, err)
+		resp, err := testutil.GetClient().Post("/open-api/v1/clusters", map[string]interface{}{
+			"name": wrrClusterName,
+			"llm_config": map[string]interface{}{
+				"models":   []string{"deepseek-chat"},
+				"provider": providerName,
+			},
+		})
+		require.NoError(t, err)
+		require.Equal(t, 200, resp.ErrNum, resp.ErrMsg)
+		t.Cleanup(func() { testutil.DeleteProvider(providerName) })
+	}
+	t.Cleanup(func() {
+		testutil.DeleteCluster(eppClusterName)
+		testutil.DeleteCluster(wrrClusterName)
+	})
+
+	resp, err := testutil.GetClient().Get("/inner-api/v1/configs/tls_conf/server_data_conf")
+	require.NoError(t, err)
+	testutil.AssertSuccess(t, resp)
+	testutil.AssertSchema(t, resp, ServerDataConfSchema)
+
+	// EPP cluster：BalanceMode=EPP 且 EPPAddr 有序 [主, 备]（server-data-conf.md §3.3）。
+	assignResp, err := testutil.GetClient().Get("/open-api/v1/epp-assignments", map[string]string{
+		"cluster": eppClusterName,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 200, assignResp.ErrNum, assignResp.ErrMsg)
+	var assignView map[string]interface{}
+	require.NoError(t, json.Unmarshal(assignResp.Data, &assignView))
+	entries := assignView["clusters"].([]interface{})
+	entry := entries[0].(map[string]interface{})
+	primary := entry["primary"].(map[string]interface{})
+	standby := entry["standby"].(map[string]interface{})
+	expectedAddrs := []interface{}{
+		fmt.Sprintf("%s:%v", primary["host"], int(primary["port"].(float64))),
+		fmt.Sprintf("%s:%v", standby["host"], int(standby["port"].(float64))),
+	}
+	assertServerDataConfEpp(t, resp.Data, eppClusterName, "EPP", expectedAddrs)
+
+	// WRR cluster：BalanceMode=WRR 且无 EPPAddr。
+	assertServerDataConfEpp(t, resp.Data, wrrClusterName, "WRR", nil)
+}
+
+// assertServerDataConfEpp 校验导出结果中指定 cluster 的 GslbBasic.BalanceMode / EPPAddr
+// （server-data-conf.md §3.3：EPPAddr 有序 [主, 备]，WRR 时为 null）。
+func assertServerDataConfEpp(t *testing.T, data []byte, clusterName, wantMode string, wantEPPAddr []interface{}) {
+	t.Helper()
+	var payload map[string]interface{}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("unmarshal server_data_conf data: %v", err)
+	}
+	clusterConf := payload["ClusterConf"].(map[string]interface{})
+	config := clusterConf["Config"].(map[string]interface{})
+	cluster, ok := config[clusterName].(map[string]interface{})
+	if !ok {
+		t.Fatalf("cluster %s not found in ClusterConf.Config", clusterName)
+	}
+	gslbBasic, ok := cluster["GslbBasic"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("GslbBasic not found for cluster %s", clusterName)
+	}
+	assert.Equal(t, wantMode, gslbBasic["BalanceMode"])
+	if wantEPPAddr == nil {
+		assert.Nil(t, gslbBasic["EPPAddr"], "WRR cluster should not export EPPAddr")
+		return
+	}
+	eppAddr, ok := gslbBasic["EPPAddr"].([]interface{})
+	if !assert.True(t, ok, "EPPAddr should be an array for cluster %s", clusterName) {
+		return
+	}
+	assert.Equal(t, wantEPPAddr, eppAddr, "EPPAddr should be ordered [primary, standby]")
 }

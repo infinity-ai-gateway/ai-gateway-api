@@ -23,6 +23,19 @@ import (
 type DBContexter interface {
 	context.Context
 	Conn() *sql.DB
+	// Execer returns the effective SQL executor: the active transaction
+	// when inside one, or the connection pool otherwise. dao statements
+	// must go through Execer so AtomExecute closures actually run in the
+	// transaction instead of autocommitting through the pool.
+	Execer() SqlExecutor
+}
+
+// SqlExecutor is the common statement-execution surface implemented by
+// both *sql.DB (connection pool, autocommit) and *sql.Tx (transaction).
+type SqlExecutor interface {
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
 }
 
 type DBContext struct {
@@ -40,6 +53,15 @@ func NewDBContext(ctx context.Context, conn *sql.DB) *DBContext {
 }
 
 func (ctx *DBContext) Conn() *sql.DB {
+	return ctx.conn
+}
+
+// Execer returns the effective SQL executor: the active transaction when
+// one is open, or the connection pool otherwise.
+func (ctx *DBContext) Execer() SqlExecutor {
+	if ctx.tx != nil {
+		return ctx.tx
+	}
 	return ctx.conn
 }
 

@@ -192,7 +192,7 @@ func (s *RouteRulesStorager) FetchRouteRulesList(ctx context.Context, filter *sh
 	for _, one := range list {
 		result = append(result, &shared.RouteTableParam{
 			ID:      &one.ID,
-			Type:    one.Type,
+			Type:    shared.ToRouteTableType(one.Type),
 			Owner:   one.Owner,
 			Enabled: one.Enabled,
 		})
@@ -209,6 +209,10 @@ func routeRulesFilterToParam(filter *shared.RouteRulesFilter) *dao.TRouteRulesPa
 	param := &dao.TRouteRulesParam{
 		Type:  filter.Type,
 		Owner: filter.Owner,
+	}
+	if param.Type != nil {
+		internalType := shared.FromRouteTableType(*param.Type)
+		param.Type = &internalType
 	}
 	if filter.Enabled != nil {
 		param.Enabled = filter.Enabled

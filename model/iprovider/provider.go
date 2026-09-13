@@ -24,6 +24,7 @@ import (
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib"
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xerror"
+	"github.com/rainway-ai-gateway/ai-gateway-api/model/ioperlog"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/itxn"
 )
 
@@ -39,6 +40,7 @@ var (
 	ValidModelProtocols = map[string]bool{
 		"openai":    true,
 		"anthropic": true,
+		"gemini":    true,
 	}
 )
 
@@ -143,13 +145,24 @@ func NewProviderManager(txn itxn.TxnStorager, storager ProviderStorager) *Provid
 
 // ProviderManager provides business-level operations for providers.
 type ProviderManager struct {
-	txn      itxn.TxnStorager
-	storager ProviderStorager
+	txn                 itxn.TxnStorager
+	storager            ProviderStorager
+	operationLogManager ioperlog.OperationLogRecorder
+}
+
+// SetOperationLogManager injects the operation log recorder.
+func (m *ProviderManager) SetOperationLogManager(manager ioperlog.OperationLogRecorder) {
+	m.operationLogManager = manager
 }
 
 // CreateProvider creates a new provider after validation.
 func (m *ProviderManager) CreateProvider(ctx context.Context, param *ProviderParam) (int64, error) {
 	if err := ValidateProviderParam(param); err != nil {
+		name := ""
+		if param != nil && param.Name != nil {
+			name = *param.Name
+		}
+		m.recordProviderOperation(ctx, string(ioperlog.ActionCreate), name, nil, providerParamToMap(param), err)
 		return 0, err
 	}
 
@@ -166,7 +179,13 @@ func (m *ProviderManager) CreateProvider(ctx context.Context, param *ProviderPar
 		id, err = m.storager.CreateProvider(ctx, param)
 		return err
 	})
-	return id, err
+	if err != nil {
+		m.recordProviderOperation(ctx, string(ioperlog.ActionCreate), *param.Name, nil, providerParamToMap(param), err)
+		return 0, err
+	}
+
+	m.recordProviderOperation(ctx, string(ioperlog.ActionCreate), *param.Name, nil, providerParamToMap(param), nil)
+	return id, nil
 }
 
 // UpdateProvider updates an existing provider.
@@ -179,10 +198,12 @@ func (m *ProviderManager) UpdateProvider(ctx context.Context, name string,
 	syncHooks ...func(ctx context.Context, oldProvider, newProvider *Provider) error) error {
 
 	if err := ValidateProviderParam(param); err != nil {
+		m.recordProviderOperation(ctx, string(ioperlog.ActionUpdate), name, nil, providerParamToMap(param), err)
 		return err
 	}
 
-	return m.txn.AtomExecute(ctx, func(ctx context.Context) error {
+	var oldProvider *Provider
+	err := m.txn.AtomExecute(ctx, func(ctx context.Context) error {
 		existing, err := m.storager.FetchProvider(ctx, &ProviderFilter{Name: &name})
 		if err != nil {
 			return err
@@ -190,6 +211,7 @@ func (m *ProviderManager) UpdateProvider(ctx context.Context, name string,
 		if existing == nil {
 			return xerror.WrapRecordNotExist("provider")
 		}
+		oldProvider = existing
 
 		// Capture which cluster-relevant fields are explicitly provided before
 		// the storager applies defaults (FillDefaults mutates nil slices into
@@ -238,16 +260,25 @@ func (m *ProviderManager) UpdateProvider(ctx context.Context, name string,
 
 		return nil
 	})
+	if err != nil {
+		m.recordProviderOperation(ctx, string(ioperlog.ActionUpdate), name, providerToMap(oldProvider), providerParamToMap(param), err)
+		return err
+	}
+
+	m.recordProviderOperation(ctx, string(ioperlog.ActionUpdate), name, providerToMap(oldProvider), providerParamToMap(param), nil)
+	return nil
 }
 
 // UpdatePricingTiers updates the time zone and pricing tiers of a provider.
 // It supports both JSON (parsed into PricingTiersParam) and YAML bodies at the endpoint layer.
 func (m *ProviderManager) UpdatePricingTiers(ctx context.Context, name string, param *PricingTiersParam) error {
 	if err := ValidatePricingTiersParam(param); err != nil {
+		m.recordProviderOperation(ctx, string(ioperlog.ActionUpdate), name, nil, nil, err)
 		return err
 	}
 
-	return m.txn.AtomExecute(ctx, func(ctx context.Context) error {
+	var oldProvider *Provider
+	err := m.txn.AtomExecute(ctx, func(ctx context.Context) error {
 		existing, err := m.storager.FetchProvider(ctx, &ProviderFilter{Name: &name})
 		if err != nil {
 			return err
@@ -255,6 +286,7 @@ func (m *ProviderManager) UpdatePricingTiers(ctx context.Context, name string, p
 		if existing == nil {
 			return xerror.WrapRecordNotExist("provider")
 		}
+		oldProvider = existing
 
 		// Preserve all existing provider fields; only update time_zone and tiers.
 		updateParam := &ProviderParam{
@@ -270,13 +302,25 @@ func (m *ProviderManager) UpdatePricingTiers(ctx context.Context, name string, p
 		}
 		return m.storager.UpdateProvider(ctx, name, updateParam)
 	})
+	if err != nil {
+		m.recordProviderOperation(ctx, string(ioperlog.ActionUpdate), name, providerToMap(oldProvider), nil, err)
+		return err
+	}
+
+	after := map[string]interface{}{
+		"time_zone": param.TimeZone,
+		"tiers":     param.Tiers,
+	}
+	m.recordProviderOperation(ctx, string(ioperlog.ActionUpdate), name, providerToMap(oldProvider), after, nil)
+	return nil
 }
 
 // DeleteProvider deletes a provider if it is not referenced.
 func (m *ProviderManager) DeleteProvider(ctx context.Context, name string,
 	refCheckers ...func(context.Context, string) error) error {
 
-	return m.txn.AtomExecute(ctx, func(ctx context.Context) error {
+	var oldProvider *Provider
+	err := m.txn.AtomExecute(ctx, func(ctx context.Context) error {
 		existing, err := m.storager.FetchProvider(ctx, &ProviderFilter{Name: &name})
 		if err != nil {
 			return err
@@ -284,6 +328,7 @@ func (m *ProviderManager) DeleteProvider(ctx context.Context, name string,
 		if existing == nil {
 			return xerror.WrapRecordNotExist("provider")
 		}
+		oldProvider = existing
 
 		for _, checker := range refCheckers {
 			if err := checker(ctx, name); err != nil {
@@ -293,6 +338,13 @@ func (m *ProviderManager) DeleteProvider(ctx context.Context, name string,
 
 		return m.storager.DeleteProvider(ctx, name)
 	})
+	if err != nil {
+		m.recordProviderOperation(ctx, string(ioperlog.ActionDelete), name, providerToMap(oldProvider), nil, err)
+		return err
+	}
+
+	m.recordProviderOperation(ctx, string(ioperlog.ActionDelete), name, providerToMap(oldProvider), nil, nil)
+	return nil
 }
 
 // FetchProvider fetches a single provider by filter.
@@ -456,6 +508,12 @@ func ValidateProviderParam(param *ProviderParam) error {
 			if len(k.Key) > MaxProviderKeyLength {
 				return xerror.WrapParamErrorWithMsg("keys[%d].key length must be <= %d", i, MaxProviderKeyLength)
 			}
+		}
+	}
+
+	if param.TimeZone != nil {
+		if err := validateTimeZone(*param.TimeZone); err != nil {
+			return err
 		}
 	}
 
@@ -729,6 +787,8 @@ func BuildAuthHeader(protocol, key string) (string, string) {
 	switch protocol {
 	case "anthropic":
 		return "x-api-key", key
+	case "gemini":
+		return "x-goog-api-key", key
 	case "openai":
 		fallthrough
 	default:

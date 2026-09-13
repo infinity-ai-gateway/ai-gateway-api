@@ -200,6 +200,7 @@ type QuotaCache interface {
     GetRemaining(ctx context.Context, key string, unit *string) (float64, error)
     SetRemaining(ctx context.Context, key string, quota *float64, unit *string) error
     ResetToQuota(ctx context.Context, key string, quota *float64, unit *string) error
+    ResetToQuotaAtomic(ctx context.Context, key string, quota *float64, unit *string) error
     DeleteKeys(ctx context.Context, keys []string) error
 }
 ```

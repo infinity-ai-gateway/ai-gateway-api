@@ -30,12 +30,14 @@ package container
 
 import (
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/api_key"
+	"github.com/rainway-ai-gateway/ai-gateway-api/model/epp_pool"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/iai_route"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/iauth"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/ibasic"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/icluster_conf"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/imodel_price"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/imods"
+	"github.com/rainway-ai-gateway/ai-gateway-api/model/ioperlog"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/iprotocol"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/iprovider"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/iroute_conf"
@@ -87,6 +89,7 @@ var (
 	// Quota management
 	EntityTypeStorager      entity.EntityTypeStorager
 	EntityStorager          entity.EntityStorager
+	EntityIDGenerator       entity.EntityIDGenerator
 	QuotaPlanStorager       quota.QuotaPlanStorager
 	RateLimitPolicyStorager rate_limit_policy.RateLimitPolicyStorager
 	RouteRulesStorager      shared.RouteRulesStorager
@@ -108,4 +111,12 @@ var (
 	AIRouteExporter        *imods.AIRouteExporter
 	BalanceSyncManager     *quota.BalanceSyncManager
 	QuotaResetScheduler    *quota.QuotaResetScheduler
+
+	// Operation logs
+	OperationLogStorager ioperlog.OperationLogStorager
+	OperationLogManager  ioperlog.OperationLogManagerInterface
+
+	// EPP scheduling integration (see model/epp_pool and design-docs
+	// modifications/2026-09-08-epp-scheduling-integration).
+	EppPoolManager *epp_pool.EppPoolManager
 )

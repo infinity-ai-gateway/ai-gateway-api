@@ -36,6 +36,9 @@ var (
 	hostnameLabel = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$`)
 	// nameToken matches the character set used by UserName/TokenName/ClusterName.
 	nameToken = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
+	// entityNameToken matches the character set used by EntityName.
+	// '@' is allowed to support names in the form "user@project".
+	entityNameToken = regexp.MustCompile(`^[a-z0-9_@_-]+$`)
 	// entityTypeToken matches the character set used by EntityTypeName.
 	entityTypeToken = regexp.MustCompile(`^[a-z0-9_-]+$`)
 	// rateLimitNameToken matches the character set used by rate-limit rule names.
@@ -46,6 +49,7 @@ const (
 	MaxUserNameLength       = 64
 	MaxTokenNameLength      = 64
 	MaxClusterNameLength    = 64
+	MaxCertNameLength       = 64
 	MaxEntityTypeNameLength = 32
 	MaxEntityNameLength     = 64
 	MaxDescriptionLength    = 256
@@ -257,19 +261,36 @@ func ClusterName(s string) error {
 	return nil
 }
 
+// CertName validates a certificate name.
+// Rules are aligned with ClusterName, except the length limit starts at 2
+// to match the existing "required,min=2" constraint on cert_name.
+func CertName(s string) error {
+	if err := validateName(s, 2, MaxCertNameLength, "cert_name"); err != nil {
+		return err
+	}
+	if err := validateNamePattern(s, nameToken, "cert_name"); err != nil {
+		return err
+	}
+	if err := validateNameEdges(s, "cert_name"); err != nil {
+		return err
+	}
+	return nil
+}
+
 // EntityName validates an entity name.
-// Rules are aligned with EntityTypeName, except the length limit (64 vs 32).
+// Rules are aligned with EntityTypeName, except the length limit (64 vs 32)
+// and the additional '@' character (for names in the form "user@project").
 func EntityName(s string) error {
 	if err := validateName(s, 1, MaxEntityNameLength, "name"); err != nil {
 		return err
 	}
-	if err := validateNamePattern(s, entityTypeToken, "name"); err != nil {
+	if err := validateNamePattern(s, entityNameToken, "name"); err != nil {
 		return err
 	}
 	first := s[0]
 	last := s[len(s)-1]
-	if first == '-' || first == '_' || last == '-' || last == '_' {
-		return xerror.WrapParamErrorWithMsg("name cannot start or end with '-' or '_'")
+	if first == '-' || first == '_' || first == '@' || last == '-' || last == '_' || last == '@' {
+		return xerror.WrapParamErrorWithMsg("name cannot start or end with '-', '_', or '@'")
 	}
 	return nil
 }

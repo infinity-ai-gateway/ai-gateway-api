@@ -94,7 +94,7 @@ func TProviderListWithPagination(dbCtx lib.DBContexter, where *TProviderParam, p
 		return nil, xerror.WrapDaoError(err)
 	}
 
-	rows, err := dbCtx.Conn().QueryContext(dbCtx, sql, args...)
+	rows, err := dbCtx.Execer().QueryContext(dbCtx, sql, args...)
 	if err != nil {
 		return nil, xerror.WrapDaoError(err)
 	}
@@ -122,7 +122,7 @@ func TProviderNames(dbCtx lib.DBContexter) ([]string, error) {
 		return nil, xerror.WrapDaoError(err)
 	}
 
-	rows, err := dbCtx.Conn().QueryContext(dbCtx, sql, args...)
+	rows, err := dbCtx.Execer().QueryContext(dbCtx, sql, args...)
 	if err != nil {
 		return nil, xerror.WrapDaoError(err)
 	}
@@ -152,7 +152,7 @@ func TProviderCount(dbCtx lib.DBContexter, where *TProviderParam) (int64, error)
 		return 0, xerror.WrapDaoError(err)
 	}
 
-	rows, err := dbCtx.Conn().QueryContext(dbCtx, sql, args...)
+	rows, err := dbCtx.Execer().QueryContext(dbCtx, sql, args...)
 	if err != nil {
 		return 0, xerror.WrapDaoError(err)
 	}

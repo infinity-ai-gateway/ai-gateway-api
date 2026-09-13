@@ -19,6 +19,7 @@ import (
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xerror"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/ibasic"
+	"github.com/rainway-ai-gateway/ai-gateway-api/model/ioperlog"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/itxn"
 )
 
@@ -47,8 +48,9 @@ type AuthorizeStorager interface {
 }
 
 type AuthorizeManager struct {
-	storager AuthorizeStorager
-	txn      itxn.TxnStorager
+	storager            AuthorizeStorager
+	txn                 itxn.TxnStorager
+	operationLogManager ioperlog.OperationLogRecorder
 }
 
 func NewAuthorizeManager(txn itxn.TxnStorager, storager AuthorizeStorager) *AuthorizeManager {
@@ -58,17 +60,31 @@ func NewAuthorizeManager(txn itxn.TxnStorager, storager AuthorizeStorager) *Auth
 	}
 }
 
+// SetOperationLogManager injects the operation log recorder.
+func (m *AuthorizeManager) SetOperationLogManager(manager ioperlog.OperationLogRecorder) {
+	m.operationLogManager = manager
+}
+
 func (m *AuthorizeManager) UpdateUserIsAdmin(ctx context.Context, user *User, isAdmin bool) (err error) {
+	scopes := []string{ScopeProduct}
+	if isAdmin {
+		scopes = []string{ScopeSystem}
+	}
+
 	err = m.txn.AtomExecute(ctx, func(ctx context.Context) error {
-		mapping := map[bool][]string{
-			false: {ScopeProduct},
-			true:  {ScopeSystem},
-		}
-
-		return m.storager.UpdateUserScopes(ctx, user, mapping[isAdmin])
+		return m.storager.UpdateUserScopes(ctx, user, scopes)
 	})
+	if err != nil {
+		m.recordUserOperation(ctx, string(ioperlog.ActionUpdate), user.ID, user.Name, "", userToMap(user), map[string]interface{}{
+			"scopes": scopes,
+		}, err)
+		return err
+	}
 
-	return
+	m.recordUserOperation(ctx, string(ioperlog.ActionUpdate), user.ID, user.Name, "", userToMap(user), map[string]interface{}{
+		"scopes": scopes,
+	}, nil)
+	return nil
 }
 
 func (m *AuthorizeManager) Authorizate(ctx context.Context, authrizer *Authorization) (err error) {
@@ -170,8 +186,13 @@ func (m *AuthorizeManager) BindUserProduct(ctx context.Context, user *User, prod
 
 		return err
 	})
+	if err != nil {
+		m.recordUserProductBinding(ctx, string(ioperlog.ActionBind), user, product, err)
+		return err
+	}
 
-	return
+	m.recordUserProductBinding(ctx, string(ioperlog.ActionBind), user, product, nil)
+	return nil
 }
 
 func (m *AuthorizeManager) UnBindUserProduct(ctx context.Context, user *User, product *ibasic.Product) (err error) {
@@ -186,8 +207,13 @@ func (m *AuthorizeManager) UnBindUserProduct(ctx context.Context, user *User, pr
 
 		return m.storager.UnbindUserProduct(ctx, user, product)
 	})
+	if err != nil {
+		m.recordUserProductBinding(ctx, string(ioperlog.ActionUnbind), user, product, err)
+		return err
+	}
 
-	return
+	m.recordUserProductBinding(ctx, string(ioperlog.ActionUnbind), user, product, nil)
+	return nil
 }
 
 func (m *AuthorizeManager) FetchProductTokens(ctx context.Context, product *ibasic.Product) (tokens []*Token, err error) {

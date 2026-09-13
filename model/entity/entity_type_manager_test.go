@@ -122,6 +122,9 @@ func TestEntityTypeManager_FetchEntityTypeList(t *testing.T) {
 func TestEntityTypeManager_UpdateEntityType(t *testing.T) {
 	ctx := context.Background()
 	store := &fakeEntityTypeStorager{
+		fetchFn: func(ctx context.Context, filter *EntityTypeFilter) (*EntityTypeParam, error) {
+			return &EntityTypeParam{TypeName: lib.PString("tenant"), Level: lib.PInt(1)}, nil
+		},
 		updateFn: func(ctx context.Context, filter *EntityTypeFilter, param *EntityTypeParam) (int64, error) {
 			return 1, nil
 		},
@@ -134,9 +137,26 @@ func TestEntityTypeManager_UpdateEntityType(t *testing.T) {
 	assert.Len(t, store.updated, 1)
 }
 
+func TestEntityTypeManager_UpdateEntityType_NotFound(t *testing.T) {
+	ctx := context.Background()
+	store := &fakeEntityTypeStorager{
+		fetchFn: func(ctx context.Context, filter *EntityTypeFilter) (*EntityTypeParam, error) {
+			return nil, nil
+		},
+	}
+	m := NewEntityTypeManager(&fakeTxn{}, store)
+
+	_, err := m.UpdateEntityType(ctx, &EntityTypeFilter{TypeName: lib.PString("tenant")}, &EntityTypeParam{Level: lib.PInt(2)})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Entity-Type Record Not Exist")
+}
+
 func TestEntityTypeManager_DeleteEntityType(t *testing.T) {
 	ctx := context.Background()
 	store := &fakeEntityTypeStorager{
+		fetchFn: func(ctx context.Context, filter *EntityTypeFilter) (*EntityTypeParam, error) {
+			return &EntityTypeParam{TypeName: lib.PString("tenant"), Level: lib.PInt(1)}, nil
+		},
 		deleteFn: func(ctx context.Context, filter *EntityTypeFilter) error {
 			return nil
 		},
@@ -145,4 +165,18 @@ func TestEntityTypeManager_DeleteEntityType(t *testing.T) {
 
 	require.NoError(t, m.DeleteEntityType(ctx, &EntityTypeFilter{TypeName: lib.PString("tenant")}))
 	assert.Len(t, store.deleted, 1)
+}
+
+func TestEntityTypeManager_DeleteEntityType_NotFound(t *testing.T) {
+	ctx := context.Background()
+	store := &fakeEntityTypeStorager{
+		fetchFn: func(ctx context.Context, filter *EntityTypeFilter) (*EntityTypeParam, error) {
+			return nil, nil
+		},
+	}
+	m := NewEntityTypeManager(&fakeTxn{}, store)
+
+	err := m.DeleteEntityType(ctx, &EntityTypeFilter{TypeName: lib.PString("tenant")})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Entity-Type Record Not Exist")
 }

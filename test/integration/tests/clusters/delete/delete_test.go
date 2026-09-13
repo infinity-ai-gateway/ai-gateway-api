@@ -1,3 +1,17 @@
+// Copyright(c) 2026 The Rainway AI Gateway (壬远AI网关) Authors.
+//
+//Licensed under the Apache License, Version 2.0 (the "License");
+//you may not use this file except in compliance with the License.
+//You may obtain a copy of the License at
+//
+//http://www.apache.org/licenses/LICENSE-2.0
+//
+//Unless required by applicable law or agreed to in writing, software
+//distributed under the License is distributed on an "AS IS" BASIS,
+//WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//See the License for the specific language governing permissions and
+//limitations under the License.
+
 package clusters_test
 
 import (
@@ -97,8 +111,8 @@ func assertDeleteBlocked(t *testing.T, clusterName string) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	if resp.ErrNum != 500 {
-		t.Fatalf("expected ErrNum=500, got ErrNum=%d, ErrMsg=%s", resp.ErrNum, resp.ErrMsg)
+	if resp.ErrNum != 409 {
+		t.Fatalf("expected ErrNum=409, got ErrNum=%d, ErrMsg=%s", resp.ErrNum, resp.ErrMsg)
 	}
 	if resp.ErrMsg != "" && !strings.Contains(resp.ErrMsg, "Refer To This Cluster") && !strings.Contains(resp.ErrMsg, "集群被转发规则") {
 		t.Errorf("expected error message to contain reference hint, got: %s", resp.ErrMsg)
@@ -256,5 +270,13 @@ func TestClusters_Delete(t *testing.T) {
 			resetGlobalRouteRules(t)
 			testutil.DeleteCluster(referredCluster)
 		})
+	})
+
+	t.Run("CL-5-009 删除单字符名称的集群", func(t *testing.T) {
+		clusterName := "c"
+		if _, err := testutil.CreateCluster(clusterName); err != nil {
+			t.Fatalf("setup failed: %v", err)
+		}
+		assertDeleteSuccess(t, clusterName)
 	})
 }

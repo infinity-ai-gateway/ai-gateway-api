@@ -1,8 +1,23 @@
+// Copyright(c) 2026 The Rainway AI Gateway (壬远AI网关) Authors.
+//
+//Licensed under the Apache License, Version 2.0 (the "License");
+//you may not use this file except in compliance with the License.
+//You may obtain a copy of the License at
+//
+//http://www.apache.org/licenses/LICENSE-2.0
+//
+//Unless required by applicable law or agreed to in writing, software
+//distributed under the License is distributed on an "AS IS" BASIS,
+//WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//See the License for the specific language governing permissions and
+//limitations under the License.
+
 package entity_test
 
 import (
 	"encoding/json"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -210,6 +225,26 @@ func TestEntity_Create(t *testing.T) {
 			body:     map[string]interface{}{"name": strings.Repeat("a", 65), "type": typeName},
 			wantCode: 422,
 		},
+		{
+			name:     "E-1-019 创建 Entity name 含 @（用户名@项目名 形式）",
+			body:     map[string]interface{}{"name": testutil.UniqueEntityName() + "@default", "type": typeName},
+			wantCode: 200,
+		},
+		{
+			name:     "E-1-020 创建 Entity name 以 @ 开头",
+			body:     map[string]interface{}{"name": "@badname", "type": typeName},
+			wantCode: 422,
+		},
+		{
+			name:     "E-1-021 创建 Entity name 以 @ 结尾",
+			body:     map[string]interface{}{"name": "badname@", "type": typeName},
+			wantCode: 422,
+		},
+		{
+			name:     "E-1-022 创建 Entity name 含 @ 以外的特殊字符",
+			body:     map[string]interface{}{"name": "bad#name", "type": typeName},
+			wantCode: 422,
+		},
 	}
 
 	for _, tt := range tests {
@@ -231,5 +266,81 @@ func TestEntity_Create(t *testing.T) {
 		testutil.DeleteEntity(parentID)
 		testutil.DeleteEntityType(typeName)
 		testutil.DeleteEntityType(typeName2)
+	})
+}
+
+func TestEntity_CreateAutoID(t *testing.T) {
+	typeName := testutil.UniqueEntityTypeName()
+	if _, err := testutil.CreateEntityType(typeName, 1); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+
+	t.Run("E-1-101 自动生成 ID 格式为 entity-N", func(t *testing.T) {
+		entityName := testutil.UniqueEntityName()
+		resp, err := testutil.GetClient().Post("/open-api/v1/entities", map[string]interface{}{
+			"name": entityName,
+			"type": typeName,
+		})
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		id, err := testutil.GetDataField(resp, "id")
+		if err != nil {
+			t.Fatalf("get id field: %v", err)
+		}
+		idStr, ok := id.(string)
+		if !ok || !strings.HasPrefix(idStr, "entity-") {
+			t.Fatalf("auto generated id should have entity- prefix, got %v", id)
+		}
+		seq, err := strconv.ParseInt(strings.TrimPrefix(idStr, "entity-"), 10, 64)
+		if err != nil || seq <= 0 {
+			t.Errorf("auto generated id should be entity-<positive seq>, got %s", idStr)
+		}
+		t.Cleanup(func() {
+			testutil.DeleteEntity(idStr)
+		})
+	})
+
+	t.Run("E-1-102 连续创建 Entity ID 单调递增", func(t *testing.T) {
+		// 并发正确性由 DAO 层单元测试 TestTEntityIDSeqAllocate_Concurrent 覆盖；
+		// 集成测试环境为 SQLite 文件库，多连接并发写会触发 busy 等待，故此处串行验证。
+		const count = 5
+		prevSeq := int64(0)
+		for i := 0; i < count; i++ {
+			entityName := testutil.UniqueEntityName()
+			resp, err := testutil.GetClient().Post("/open-api/v1/entities", map[string]interface{}{
+				"name": entityName,
+				"type": typeName,
+			})
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			testutil.AssertSuccess(t, resp)
+			id, err := testutil.GetDataField(resp, "id")
+			if err != nil {
+				t.Fatalf("get id field: %v", err)
+			}
+			idStr, ok := id.(string)
+			if !ok {
+				t.Fatalf("id should be a string, got %v", id)
+			}
+			seq, err := strconv.ParseInt(strings.TrimPrefix(idStr, "entity-"), 10, 64)
+			if err != nil {
+				t.Fatalf("parse entity id %s: %v", idStr, err)
+			}
+			if i > 0 && seq <= prevSeq {
+				t.Errorf("entity id seq should increase monotonically, prev %d got %d", prevSeq, seq)
+			}
+			prevSeq = seq
+			idCopy := idStr
+			t.Cleanup(func() {
+				testutil.DeleteEntity(idCopy)
+			})
+		}
+	})
+
+	t.Cleanup(func() {
+		testutil.DeleteEntityType(typeName)
 	})
 }

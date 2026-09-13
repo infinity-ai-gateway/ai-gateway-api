@@ -50,8 +50,8 @@
 | `capabilities` | []string | 模型支持的能力列表 | 默认空数组；元素应为枚举值 |
 | `supported_parameters` | []string | 支持的请求参数列表 | 默认空数组；元素应为枚举值 |
 | `limits` | object | 限制对象 | 默认空对象；键名应为枚举值；所有限制字段必须为非负整数 |
-| `prices` | object | 价格对象 | 必填；至少包含一个价格字段；所有价格字段必须为非负数；键名应为枚举值；未命中 tier 时作为 fallback 价格；支持 8 位及以上小数精度，JSON 序列化使用十进制表示法（如 `0.0000015`），不使用科学计数法 |
-| `tier_prices` | object | 分时段价格对象 | 非必填；键为 tier name（**初期只支持 `peak`**），值为价格对象；内部键名应为 `prices` 枚举；与 provider 的 `tiers` 不做强制引用校验；同样支持 8 位及以上小数精度与十进制表示法 |
+| `prices` | object | 价格对象 | 必填；至少包含一个价格字段；所有价格字段必须为非负数；键名应为枚举值；未命中 tier 时作为 fallback 价格；支持科学计数法与十进制表示法（如 `1.5e-6` 与 `0.0000015` 等价），按 float64 解析 |
+| `tier_prices` | object | 分时段价格对象 | 非必填；键为 tier name（**初期只支持 `peak`**），值为价格对象；内部键名应为 `prices` 枚举；与 provider 的 `tiers` 不做强制引用校验；同样支持科学计数法与十进制表示法 |
 | `price_currency` | string | 价格货币 | 固定为 `RMB`，请求体中无需传入 |
 | `metadata` | object | 元数据 | 默认空对象；键名应为枚举值 |
 | `create_time` | int64 | 创建时间 | Unix 时间戳（秒） |
@@ -139,14 +139,24 @@
 | `input_cost_per_token` | 每 Token 输入成本 |
 | `output_cost_per_token` | 每 Token 输出成本 |
 | `cache_read_input_token_cost` | 缓存读取输入 Token 成本 |
-| `cache_creation_input_token_cost` | 缓存创建输入 Token 成本 |
+| `cache_creation_input_token_cost` | 缓存创建输入 Token 成本（5m TTL） |
+| `cache_creation_input_token_cost_1h` | 缓存创建输入 Token 成本（1h TTL） |
 | `input_cost_per_token_above_200k_tokens` | 超过 200k Token 的输入成本 |
 | `output_cost_per_token_above_200k_tokens` | 超过 200k Token 的输出成本 |
+| `input_cost_per_token_above_256k_tokens` | 超过 256k Token 的输入成本 |
+| `output_cost_per_token_above_256k_tokens` | 超过 256k Token 的输出成本 |
+| `input_cost_per_token_above_272k_tokens` | 超过 272k Token 的输入成本 |
+| `output_cost_per_token_above_272k_tokens` | 超过 272k Token 的输出成本 |
+| `input_cost_per_token_above_512k_tokens` | 超过 512k Token 的输入成本 |
+| `output_cost_per_token_above_512k_tokens` | 超过 512k Token 的输出成本 |
 | `output_cost_per_image` | 每张输出图像成本 |
+| `input_cost_per_image_token` | 每图像输入 Token 成本 |
 | `output_cost_per_pixel` | 每像素输出成本 |
 | `output_cost_per_image_low_quality` | 低质量输出图像成本 |
 | `output_cost_per_image_high_quality` | 高质量输出图像成本 |
 | `input_cost_per_audio_per_second` | 每秒音频输入成本 |
+| `input_cost_per_audio_token` | 每音频输入 Token 成本 |
+| `output_cost_per_audio_token` | 每音频输出 Token 成本 |
 | `input_cost_per_video_per_second` | 每秒视频输入成本 |
 | `output_cost_per_second` | 每秒输出成本 |
 | `input_cost_per_query` | 每次查询输入成本 |
@@ -168,34 +178,36 @@
 
 ### 1.2 价格精度与 JSON 序列化
 
-`prices` 与 `tier_prices.<tier>` 中的价格字段为浮点数，业务上支持 8 位及更多小数精度（例如 `0.0000015`、`0.00000075`）。
+`prices` 与 `tier_prices.<tier>` 中的价格字段为浮点数（元），支持 8 位及以上小数精度（例如 `0.0000015`、`0.00000075`、`7.6234102728e-08`）。**科学计数法与十进制表示法等价合法**，输入（OpenAPI 请求体、`model-list.yaml`）按 `float64` 解析，两者解析结果完全一致。
 
-为避免默认 JSON encoder 将小数值输出为科学计数法（如 `1.5e-6`），系统在序列化时使用十进制表示法：
+序列化使用标准 JSON encoder：
 
-- 请求体、响应体、InnerAPI 导出的 `cluster_conf.data` 中，价格均显示为 `"0.0000015"`、`"0.00000075"` 等形式；
+- 请求体、响应体、InnerAPI 导出的 `cluster_conf.data` 中，价格可能以十进制（`0.0000015`）或科学计数法（`1.5e-6`）出现，均为同一数值的合法表示；
+- 精度上限来自 `float64`（有效数字约 15 位）；单价格折算 `价格 × 1e8` 不得超过 2^53（约 9e15），超出将被校验拒绝；
 - 该表示方式仅影响 JSON 文本，不改变 `float64` 数值语义与 BFE 定点整数扣减逻辑；
 - YAML 导入（`model-list.yaml`）与 OpenAPI CRUD 均按原浮点数值解析，无需额外处理。
 
-示例：
+示例（两种表示法等价）：
 
 ```json
 {
   "prices": {
-    "input_cost_per_token": 0.0000015,
+    "input_cost_per_token": 1.5e-6,
     "output_cost_per_token": 0.0000045,
-    "cache_read_input_token_cost": 0.0000005
+    "cache_read_input_token_cost": 5e-7
   },
   "tier_prices": {
     "peak": {
       "input_cost_per_token": 0.000003,
-      "output_cost_per_token": 0.000009,
+      "output_cost_per_token": 9e-6,
       "cache_read_input_token_cost": 0.000001
     }
   }
 }
 ```
 
-序列化后文本保持十进制表示，不包含 `1.5e-6`、`4.5e-6` 等科学计数法。
+> 说明：早期版本（issue-102）曾强制价格以十进制表示法序列化；v0.6 起放开学
+> 计数法，标准 encoder 对极小值（如 `1.5e-6`）可能输出科学计数法，属正常行为。
 
 ---
 
@@ -251,13 +263,15 @@ models:
 | `capabilities` | N | 能力列表，枚举值同第 1 节 `capabilities` 枚举 |
 | `supported_parameters` | N | 支持的请求参数列表，枚举值同第 1 节 `supported_parameters` 枚举 |
 | `limits` | N | 限制对象，键名枚举值同第 1 节 `limits` 枚举；所有限制字段必须为非负整数 |
-| `prices` | Y | 价格对象，键名枚举值同第 1 节 `prices` 枚举；至少包含一个价格字段；未命中 tier 时作为 fallback 价格；支持 8 位及以上小数精度 |
-| `tier_prices` | N | 分时段价格对象，键为 tier name（**初期只支持 `peak`**），值为价格对象；内部键名枚举值同第 1 节 `prices` 枚举；支持 8 位及以上小数精度 |
+| `prices` | Y | 价格对象，键名枚举值同第 1 节 `prices` 枚举；至少包含一个价格字段；未命中 tier 时作为 fallback 价格；支持科学计数法与十进制表示法 |
+| `tier_prices` | N | 分时段价格对象，键为 tier name（**初期只支持 `peak`**），值为价格对象；内部键名枚举值同第 1 节 `prices` 枚举；支持科学计数法与十进制表示法 |
 | `metadata` | N | 元数据，键名枚举值同第 1 节 `metadata` 枚举 |
 
 > **唯一性约束**：`(provider, model, mode)` 三元组必须唯一。
 > 
 > **币种说明**：v0.4 仅支持 `RMB`，`default_currency` 与单条 `price_currency`（若填写）均须为 `RMB`。
+> 
+> **merge 导入的字段语义**：`mode=merge` 对已存在 `(provider, model, mode)` 记录执行**整行覆盖**——条目未提供的可选字段（`capabilities` / `supported_parameters` / `limits` / `tier_prices` / `metadata` 等）会被清空，不会保留原值；merge 导入已有记录时必须携带希望保留的完整字段集。字段级合并请使用按 ID / 组合键 `PUT` 路径（省略字段保留原值）。详见 §3.1 处理逻辑第 9、10 步。
 
 ### 2.3 完整示例
 
@@ -343,7 +357,9 @@ models:
    - 所有 tier 价格字段必须为非负数。
 6. 校验 `limits` 中所有限制字段值为非负整数；
 7. `replace` 模式：先清空 `model_prices` 表，再写入新数据；
-8. `merge` 模式：对已有 `(provider, model, mode)` 记录更新，新增记录插入。
+8. `merge` 模式：对已有 `(provider, model, mode)` 记录更新，新增记录插入；
+9. **`merge` 模式的记录级语义为完全覆盖（整行替换）**：命中已有记录时，以导入条目为权威定义，条目中的全部字段（含可选字段 `capabilities` / `supported_parameters` / `limits` / `tier_prices` / `metadata` 等）整体写入；**条目未提供的可选字段会被清空为空值，不会保留原值**。调用方进行 merge 导入时必须为已有记录携带希望保留的完整字段集，仅传必填五项的最小记录等同于重置该记录的可选字段；
+10. 该语义与按 ID / 组合键 `PUT` 更新路径（`endpoints/openapi_v1/model_price/update.go` 的 `mergeModelPrice`，非空字段叠加、省略保留）**刻意不同**：`PUT` 面向单记录的局部补丁，`merge` 导入面向整表批量的声明式覆盖——如需字段级合并请使用 `PUT` 路径；如需整体重置整表请使用 `replace` 模式。
 
 **权限**
 
@@ -566,6 +582,10 @@ models:
 
 字段同 [1. 数据模型](#1-数据模型)，仅传需修改字段，未传入字段保持原值。请求体中无需传入 `id`、`price_currency`、`create_time`、`update_time`。
 
+> map/切片字段更新粒度：
+> - `prices`、`tier_prices`：**键级合并**。请求中传入的键覆盖对应键，未传入的键保留原值；`tier_prices` 未传入的 tier 整档保留（见 issue #140 修复）。
+> - `limits`、`metadata`（map）、`capabilities`、`supported_parameters`（切片）：**整块替换**。传入即整体覆盖，未传入则保持原值不变。
+
 **返回数据（Data内容）**
 
 返回更新后的完整记录，字段同 [1. 数据模型](#1-数据模型)。
@@ -594,6 +614,10 @@ models:
 **输入参数（Body）**
 
 字段同 [1. 数据模型](#1-数据模型)，仅传需修改字段，未传入字段保持原值。请求体中无需传入 `price_currency`、`create_time`、`update_time`。
+
+> map/切片字段更新粒度：
+> - `prices`、`tier_prices`：**键级合并**。请求中传入的键覆盖对应键，未传入的键保留原值；`tier_prices` 未传入的 tier 整档保留（见 issue #140 修复）。
+> - `limits`、`metadata`（map）、`capabilities`、`supported_parameters`（切片）：**整块替换**。传入即整体覆盖，未传入则保持原值不变。
 
 **返回数据（Data内容）**
 
@@ -655,7 +679,7 @@ Data 为 null。
 2. `provider` 仅作为价格归集标识，不强制引用 `/providers` 中已存在的 provider；
 3. `(provider, model, mode)` 组合不能重复；
 4. `prices` 必填，至少包含一个价格字段；
-5. 所有价格字段必须为非负数；支持 8 位及以上小数精度；
+5. 所有价格字段必须为非负数；支持科学计数法与十进制表示法（等价合法）；单价格折算 `价格 × 1e8` 不得超过 2^53（约 9e15），超出拒绝写入；
 6. `tier_prices` 非必填；若传入：
    - **初期 tier name 只支持 `peak`**；
    - 每个 tier 对应的价格对象中，键名须为 `prices` 枚举；

@@ -18,13 +18,15 @@ import (
 	"context"
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xerror"
+	"github.com/rainway-ai-gateway/ai-gateway-api/model/ioperlog"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/itxn"
 )
 
 // EntityTypeManager 定义 Entity 类型管理器
 type EntityTypeManager struct {
-	txn      itxn.TxnStorager
-	storager EntityTypeStorager
+	txn                 itxn.TxnStorager
+	storager            EntityTypeStorager
+	operationLogManager ioperlog.OperationLogRecorder
 }
 
 // NewEntityTypeManager 创建 Entity 类型管理器
@@ -35,21 +37,38 @@ func NewEntityTypeManager(txn itxn.TxnStorager, storager EntityTypeStorager) *En
 	}
 }
 
+// SetOperationLogManager injects the operation log recorder.
+func (m *EntityTypeManager) SetOperationLogManager(manager ioperlog.OperationLogRecorder) {
+	m.operationLogManager = manager
+}
+
 // CreateEntityType 创建 Entity 类型
 func (m *EntityTypeManager) CreateEntityType(ctx context.Context, param *EntityTypeParam) (int64, error) {
 	if param.TypeName == nil || *param.TypeName == "" {
-		return 0, xerror.WrapParamErrorWithMsg("type_name is required")
+		err := xerror.WrapParamErrorWithMsg("type_name is required")
+		m.recordEntityTypeOperation(ctx, string(ioperlog.ActionCreate), param, nil, entityTypeParamToMap(param), err)
+		return 0, err
 	}
 
 	existing, err := m.storager.FetchEntityType(ctx, &EntityTypeFilter{TypeName: param.TypeName})
 	if err != nil {
+		m.recordEntityTypeOperation(ctx, string(ioperlog.ActionCreate), param, nil, entityTypeParamToMap(param), err)
 		return 0, err
 	}
 	if existing != nil {
-		return 0, xerror.WrapRecordExisted("Entity-Type")
+		err := xerror.WrapRecordExisted("Entity-Type")
+		m.recordEntityTypeOperation(ctx, string(ioperlog.ActionCreate), param, nil, entityTypeParamToMap(param), err)
+		return 0, err
 	}
 
-	return m.storager.CreateEntityType(ctx, param)
+	id, err := m.storager.CreateEntityType(ctx, param)
+	if err != nil {
+		m.recordEntityTypeOperation(ctx, string(ioperlog.ActionCreate), param, nil, entityTypeParamToMap(param), err)
+		return 0, err
+	}
+
+	m.recordEntityTypeOperation(ctx, string(ioperlog.ActionCreate), param, nil, entityTypeParamToMap(param), nil)
+	return id, nil
 }
 
 // FetchEntityType 查询单个 Entity 类型
@@ -64,10 +83,50 @@ func (m *EntityTypeManager) FetchEntityTypeList(ctx context.Context, filter *Ent
 
 // UpdateEntityType 更新 Entity 类型
 func (m *EntityTypeManager) UpdateEntityType(ctx context.Context, filter *EntityTypeFilter, param *EntityTypeParam) (int64, error) {
-	return m.storager.UpdateEntityType(ctx, filter, param)
+	oldEntityType, err := m.storager.FetchEntityType(ctx, filter)
+	if err != nil {
+		m.recordEntityTypeOperation(ctx, string(ioperlog.ActionUpdate), param, entityTypeParamToMap(param), nil, err)
+		return 0, err
+	}
+	if oldEntityType == nil {
+		err := xerror.WrapRecordNotExist("Entity-Type")
+		m.recordEntityTypeOperation(ctx, string(ioperlog.ActionUpdate), param, entityTypeParamToMap(param), nil, err)
+		return 0, err
+	}
+
+	affected, err := m.storager.UpdateEntityType(ctx, filter, param)
+	if err != nil {
+		m.recordEntityTypeOperation(ctx, string(ioperlog.ActionUpdate), oldEntityType, entityTypeParamToMap(oldEntityType), entityTypeParamToMap(param), err)
+		return affected, err
+	}
+
+	m.recordEntityTypeOperation(ctx, string(ioperlog.ActionUpdate), oldEntityType, entityTypeParamToMap(oldEntityType), entityTypeParamToMap(param), nil)
+	return affected, nil
 }
 
 // DeleteEntityType 删除 Entity 类型
 func (m *EntityTypeManager) DeleteEntityType(ctx context.Context, filter *EntityTypeFilter) error {
-	return m.storager.DeleteEntityType(ctx, filter)
+	fallbackParam := &EntityTypeParam{}
+	if filter != nil {
+		fallbackParam.TypeName = filter.TypeName
+	}
+
+	oldEntityType, err := m.storager.FetchEntityType(ctx, filter)
+	if err != nil {
+		m.recordEntityTypeOperation(ctx, string(ioperlog.ActionDelete), fallbackParam, entityTypeParamToMap(fallbackParam), nil, err)
+		return err
+	}
+	if oldEntityType == nil {
+		err := xerror.WrapRecordNotExist("Entity-Type")
+		m.recordEntityTypeOperation(ctx, string(ioperlog.ActionDelete), fallbackParam, entityTypeParamToMap(fallbackParam), nil, err)
+		return err
+	}
+
+	if err := m.storager.DeleteEntityType(ctx, filter); err != nil {
+		m.recordEntityTypeOperation(ctx, string(ioperlog.ActionDelete), oldEntityType, entityTypeParamToMap(oldEntityType), nil, err)
+		return err
+	}
+
+	m.recordEntityTypeOperation(ctx, string(ioperlog.ActionDelete), oldEntityType, entityTypeParamToMap(oldEntityType), nil, nil)
+	return nil
 }

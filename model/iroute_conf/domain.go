@@ -18,12 +18,14 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/bfenetworks/bfe/bfe_config/bfe_route_conf/host_rule_conf"
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xerror"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/ibasic"
+	"github.com/rainway-ai-gateway/ai-gateway-api/model/ioperlog"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/itxn"
 )
 
@@ -109,8 +111,9 @@ type DomainStorager interface {
 type DomainManager struct {
 	txn itxn.TxnStorager
 
-	storager         DomainStorager
-	routeRuleManager *RouteRuleManager
+	storager            DomainStorager
+	routeRuleManager    *RouteRuleManager
+	operationLogManager ioperlog.OperationLogRecorder
 }
 
 func NewDomainManager(txn itxn.TxnStorager, storager DomainStorager,
@@ -121,6 +124,11 @@ func NewDomainManager(txn itxn.TxnStorager, storager DomainStorager,
 		storager:         storager,
 		routeRuleManager: routeRuleManager,
 	}
+}
+
+// SetOperationLogManager injects the operation log recorder.
+func (m *DomainManager) SetOperationLogManager(manager ioperlog.OperationLogRecorder) {
+	m.operationLogManager = manager
 }
 
 func (m *DomainManager) DomainList(ctx context.Context, param *DomainFilter) (list []*Domain, err error) {
@@ -187,21 +195,43 @@ func (m *DomainManager) CreateDomain(ctx context.Context, product *ibasic.Produc
 		return m.storager.CreateDomain(ctx, product, param)
 	})
 
+	domainName := ""
+	if param.Name != nil {
+		domainName = *param.Name
+	}
+
+	if err != nil {
+		m.recordDomainOperation(ctx, string(ioperlog.ActionCreate), domainName, domainName, strconv.FormatInt(product.ID, 10), nil, domainParamToMap(param), err)
+		return
+	}
+
+	m.recordDomainOperation(ctx, string(ioperlog.ActionCreate), domainName, domainName, strconv.FormatInt(product.ID, 10), nil, domainParamToMap(param), nil)
+
 	return
 }
 
 func (m *DomainManager) DeleteDomain(ctx context.Context, product *ibasic.Product, domain *Domain) (err error) {
 	dbui, err := m.BeUsed(ctx, product, domain)
 	if err != nil {
+		m.recordDomainOperation(ctx, string(ioperlog.ActionDelete), domain.Name, domain.Name, strconv.FormatInt(product.ID, 10), domainToMap(domain), nil, err)
 		return err
 	}
 	if dbui != nil {
-		return xerror.WrapDependentUnReadyErrorWithMsg(dbui.String())
+		err = xerror.WrapDependentUnReadyErrorWithMsg("%s", dbui.String())
+		m.recordDomainOperation(ctx, string(ioperlog.ActionDelete), domain.Name, domain.Name, strconv.FormatInt(product.ID, 10), domainToMap(domain), nil, err)
+		return err
 	}
 
-	return m.txn.AtomExecute(ctx, func(ctx context.Context) error {
+	err = m.txn.AtomExecute(ctx, func(ctx context.Context) error {
 		return m.storager.DeleteDomain(ctx, product, domain)
 	})
+	if err != nil {
+		m.recordDomainOperation(ctx, string(ioperlog.ActionDelete), domain.Name, domain.Name, strconv.FormatInt(product.ID, 10), domainToMap(domain), nil, err)
+		return
+	}
+
+	m.recordDomainOperation(ctx, string(ioperlog.ActionDelete), domain.Name, domain.Name, strconv.FormatInt(product.ID, 10), domainToMap(domain), nil, nil)
+	return
 }
 
 func (m *DomainManager) BeUsed(ctx context.Context, product *ibasic.Product, domain *Domain) (*DomainBeUsedInfo, error) {

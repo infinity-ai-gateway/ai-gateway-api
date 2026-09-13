@@ -17,6 +17,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/iprovider"
@@ -57,7 +58,7 @@ func (s *RDBProviderStorager) UpdateProvider(ctx context.Context, name string, p
 		return err
 	}
 
-	data, err := toDAOParam(param)
+	data, err := toDAOParamForUpdate(param)
 	if err != nil {
 		return err
 	}
@@ -241,6 +242,71 @@ func fromDAO(one *dao.TProvider) *iprovider.Provider {
 		CreateTime:     createTime,
 		UpdateTime:     updateTime,
 	}
+}
+
+func toDAOParamForUpdate(param *iprovider.ProviderParam) (*dao.TProviderParam, error) {
+	if param == nil {
+		return nil, nil
+	}
+
+	modelEndpoint, err := marshalJSONPtr(param.ModelEndpoint)
+	if err != nil {
+		return nil, err
+	}
+	models, err := marshalJSONPtr(param.Models)
+	if err != nil {
+		return nil, err
+	}
+	keys, err := marshalJSONPtr(param.Keys)
+	if err != nil {
+		return nil, err
+	}
+	instancePool, err := marshalJSONPtr(param.InstancePool)
+	if err != nil {
+		return nil, err
+	}
+	modelProtocols, err := marshalJSONPtr(param.ModelProtocols)
+	if err != nil {
+		return nil, err
+	}
+	tiers, err := marshalJSONPtr(param.Tiers)
+	if err != nil {
+		return nil, err
+	}
+
+	return &dao.TProviderParam{
+		Name:           param.Name,
+		Description:    param.Description,
+		ModelEndpoint:  modelEndpoint,
+		Models:         models,
+		Keys:           keys,
+		InstancePool:   instancePool,
+		ModelProtocols: modelProtocols,
+		TimeZone:       param.TimeZone,
+		Tiers:          tiers,
+	}, nil
+}
+
+// marshalJSONPtr returns nil for a nil interface, nil pointer, or nil slice,
+// so that the DAO layer's nil-skip keeps the existing column value on partial
+// updates. Explicitly provided values (including empty slices) are marshaled
+// normally.
+func marshalJSONPtr(v interface{}) (*string, error) {
+	if v == nil {
+		return nil, nil
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Ptr, reflect.Slice, reflect.Map, reflect.Interface:
+		if rv.IsNil() {
+			return nil, nil
+		}
+	}
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	return lib.PString(string(data)), nil
 }
 
 func marshalJSON(v interface{}) (*string, error) {

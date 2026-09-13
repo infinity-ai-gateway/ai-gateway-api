@@ -88,11 +88,38 @@ CREATE TABLE `clusters` (
   `failure_status` tinyint(1) NOT NULL DEFAULT '0',
   `max_conns_per_host` int(11) NOT NULL DEFAULT '0',
   `llm_config` text,
+  `balance_mode` varchar(16) NOT NULL DEFAULT 'WRR' COMMENT '均衡模式：WRR/EPP',
+  `epp_config` text COMMENT 'EPP调度配置（简化用户形态JSON）',
   `created_at` datetime NOT NULL,
   `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `name_index` (`name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+
+-- create epp_instances (EPP实例池表)
+DROP TABLE IF EXISTS `epp_instances`;
+CREATE TABLE `epp_instances` (
+  `id` varchar(128) NOT NULL COMMENT '实例id，池内全局唯一',
+  `host` varchar(255) NOT NULL COMMENT '实例主机名或IP（IPv6字面量不带括号）',
+  `port` int(11) NOT NULL COMMENT '实例端口',
+  `group_name` varchar(128) NOT NULL COMMENT '实例组名',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_host_port` (`host`, `port`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='EPP实例池表';
+
+-- create epp_assignments (EPP分配表，只存主)
+DROP TABLE IF EXISTS `epp_assignments`;
+CREATE TABLE `epp_assignments` (
+  `cluster` varchar(255) NOT NULL COMMENT 'cluster名',
+  `group_name` varchar(128) NOT NULL COMMENT '实例组名',
+  `primary_instance_id` varchar(128) NOT NULL COMMENT '主实例id',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`cluster`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='EPP分配表';
 
 
 -- create lb_matrices
@@ -234,7 +261,8 @@ CREATE TABLE `config_versions` (
   `version` varchar(255) NOT NULL,
   `created_at` datetime NOT NULL,
   `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_name_version` (`name`, `version`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 
@@ -380,6 +408,14 @@ CREATE TABLE `entities` (
   INDEX `idx_route_rules_id` (`route_rules_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Entity实体表';
 
+-- create entity_id_seq (Entity ID序号分配表)
+DROP TABLE IF EXISTS `entity_id_seq`;
+CREATE TABLE `entity_id_seq` (
+  `name` varchar(32) NOT NULL COMMENT '序号键（固定为entity）',
+  `next_seq` bigint NOT NULL DEFAULT '1' COMMENT '下一个可用序号',
+  PRIMARY KEY (`name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Entity ID序号分配表';
+
 -- create quota_plans (配额计划表)
 DROP TABLE IF EXISTS `quota_plans`;
 CREATE TABLE `quota_plans` (
@@ -461,6 +497,36 @@ CREATE TABLE `route_rules` (
   UNIQUE KEY `uk_type_owner` (`type`, `owner`),
   INDEX `idx_enabled` (`enabled`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='路由规则表';
+
+-- create operation_logs
+DROP TABLE IF EXISTS `operation_logs`;
+CREATE TABLE `operation_logs` (
+  `id` bigint(20) NOT NULL AUTO_INCREMENT,
+  `log_id` varchar(64) NOT NULL COMMENT '请求唯一标识，与 access log 中的 LogID 一致，用于关联与去重',
+  `operator_type` tinyint(4) NOT NULL DEFAULT '0' COMMENT '操作者类型：0=user, 1=token',
+  `operator_id` bigint(20) NOT NULL DEFAULT '0' COMMENT '操作者在对应表中的主键 ID',
+  `operator_name` varchar(255) NOT NULL DEFAULT '' COMMENT '操作者名称（user_name 或 token_name）',
+  `action` varchar(32) NOT NULL COMMENT '操作动作：create/update/delete/reset/...',
+  `resource_type` varchar(64) NOT NULL COMMENT '资源类型：entity/api_key/provider/...',
+  `resource_id` varchar(255) NOT NULL DEFAULT '' COMMENT '被操作资源业务 ID',
+  `resource_name` varchar(512) NOT NULL DEFAULT '' COMMENT '被操作资源名称，便于展示',
+  `resource_parent_id` varchar(255) NOT NULL DEFAULT '' COMMENT '资源父级业务 ID（如 entity 层级中的父节点）',
+  `status` tinyint(4) NOT NULL DEFAULT '1' COMMENT '操作结果：1=success, 2=failed',
+  `error_msg` varchar(1024) NOT NULL DEFAULT '' COMMENT '失败时的简要错误信息',
+  `change_summary` mediumtext COMMENT '变更摘要 JSON，记录变更前后关键字段（脱敏后）',
+  `request_path` varchar(512) NOT NULL DEFAULT '' COMMENT '请求路径',
+  `request_method` varchar(16) NOT NULL DEFAULT '' COMMENT '请求方法',
+  `client_ip` varchar(64) NOT NULL DEFAULT '' COMMENT '客户端 IP',
+  `user_agent` varchar(512) NOT NULL DEFAULT '' COMMENT 'User-Agent',
+  `created_at` datetime NOT NULL COMMENT '操作发生时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_operator` (`operator_type`, `operator_id`),
+  KEY `idx_resource` (`resource_type`, `resource_id`),
+  KEY `idx_action` (`action`),
+  KEY `idx_created_at` (`created_at`),
+  KEY `idx_log_id` (`log_id`),
+  KEY `idx_resource_parent` (`resource_parent_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 网关配置操作日志表';
 
 -- insert default user
 insert into users (id, name, password, scopes, created_at) values(1, 'admin', 'admin', 'System', now());

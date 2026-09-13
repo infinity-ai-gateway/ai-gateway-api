@@ -74,9 +74,11 @@ func (m *BalanceSyncManager) ResetExpiredBalances(ctx context.Context) error {
 					continue
 				}
 
-				// 5. 更新 quota_plans.last_reset_at
+				// 5. 条件更新 quota_plans.last_reset_at，作为同一周期内幂等重置的兜底
+				periodStart := m.getPeriodStart(*plan.ResetPeriod, now)
 				_, err = m.planStorager.UpdateQuotaPlan(ctx, &QuotaPlanFilter{
-					ID: plan.ID,
+					ID:                plan.ID,
+					LastResetAtBefore: &periodStart,
 				}, &QuotaPlanParam{
 					LastResetAt: lib.PTime(now),
 				})
@@ -95,31 +97,27 @@ func (m *BalanceSyncManager) ResetExpiredBalances(ctx context.Context) error {
 // shouldResetByPeriod 判断是否应该根据周期重置配额
 // 采用自然周/自然月的边界判断
 func (m *BalanceSyncManager) shouldResetByPeriod(lastResetAt *time.Time, resetPeriod string, now time.Time) bool {
+	if resetPeriod != "weekly" && resetPeriod != "monthly" {
+		return false
+	}
+	currentStart := m.getPeriodStart(resetPeriod, now)
 	if lastResetAt == nil {
 		return true // 从未重置过，需要重置
 	}
+	lastStart := m.getPeriodStart(resetPeriod, *lastResetAt)
+	return currentStart.After(lastStart)
+}
 
+// getPeriodStart 返回给定时间所在周期的开始时间
+func (m *BalanceSyncManager) getPeriodStart(resetPeriod string, t time.Time) time.Time {
 	switch resetPeriod {
 	case "weekly":
-		// 自然周：每周一 00:00:00
-		// 计算上次重置时间所在周的周一
-		lastResetWeekStart := getWeekStart(*lastResetAt)
-		// 计算当前时间所在周的周一
-		currentWeekStart := getWeekStart(now)
-		// 如果当前周的开始时间晚于上次重置周的开始时间，说明需要重置
-		return currentWeekStart.After(lastResetWeekStart)
-
+		return getWeekStart(t)
 	case "monthly":
-		// 自然月：每月1日 00:00:00
-		// 计算上次重置时间所在月的1日
-		lastResetMonthStart := getMonthStart(*lastResetAt)
-		// 计算当前时间所在月的1日
-		currentMonthStart := getMonthStart(now)
-		// 如果当前月的开始时间晚于上次重置月的开始时间，说明需要重置
-		return currentMonthStart.After(lastResetMonthStart)
+		return getMonthStart(t)
+	default:
+		return t
 	}
-
-	return false
 }
 
 // getWeekStart 获取给定时间所在周的周一 00:00:00
@@ -185,7 +183,7 @@ func (m *BalanceSyncManager) resetAPIKeysRedisUsage(ctx context.Context, planID 
 			continue
 		}
 
-		if err := m.quotaCache.ResetToQuota(ctx, *apiKey.Key, plan.Quota, plan.Unit); err != nil {
+		if err := m.quotaCache.ResetToQuotaAtomic(ctx, *apiKey.Key, plan.Quota, plan.Unit); err != nil {
 			fmt.Printf("Failed to reset Redis value for API-Key %s (key=%s): %v\n",
 				*apiKey.ID, *apiKey.Key, err)
 			continue
@@ -201,7 +199,7 @@ func (m *BalanceSyncManager) resetAPIKeysRedisUsage(ctx context.Context, planID 
 			continue
 		}
 
-		if err := m.quotaCache.ResetToQuota(ctx, *entity.EntityID, plan.Quota, plan.Unit); err != nil {
+		if err := m.quotaCache.ResetToQuotaAtomic(ctx, *entity.EntityID, plan.Quota, plan.Unit); err != nil {
 			fmt.Printf("Failed to reset Redis value for Entity %s: %v\n",
 				*entity.EntityID, err)
 			continue

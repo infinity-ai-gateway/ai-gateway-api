@@ -88,12 +88,40 @@ CREATE TABLE clusters (
   failure_status INTEGER NOT NULL DEFAULT 0,
   max_conns_per_host INTEGER NOT NULL DEFAULT 0,
   llm_config TEXT,
+  balance_mode TEXT NOT NULL DEFAULT 'WRR',
+  epp_config TEXT,
   created_at DATETIME NOT NULL,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE (name)
 );
 CREATE TRIGGER clusters_updated_at AFTER UPDATE ON clusters
   FOR EACH ROW BEGIN UPDATE clusters SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id; END;
+
+-- create epp_instances
+DROP TABLE IF EXISTS epp_instances;
+CREATE TABLE epp_instances (
+  id TEXT NOT NULL PRIMARY KEY,
+  host TEXT NOT NULL,
+  port INTEGER NOT NULL,
+  group_name TEXT NOT NULL,
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (host, port)
+);
+CREATE TRIGGER epp_instances_update_time AFTER UPDATE ON epp_instances
+  FOR EACH ROW BEGIN UPDATE epp_instances SET update_time = CURRENT_TIMESTAMP WHERE id = OLD.id; END;
+
+-- create epp_assignments
+DROP TABLE IF EXISTS epp_assignments;
+CREATE TABLE epp_assignments (
+  cluster TEXT NOT NULL PRIMARY KEY,
+  group_name TEXT NOT NULL,
+  primary_instance_id TEXT NOT NULL,
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TRIGGER epp_assignments_update_time AFTER UPDATE ON epp_assignments
+  FOR EACH ROW BEGIN UPDATE epp_assignments SET update_time = CURRENT_TIMESTAMP WHERE cluster = OLD.cluster; END;
 
 -- create lb_matrices
 DROP TABLE IF EXISTS lb_matrices;
@@ -238,7 +266,8 @@ CREATE TABLE config_versions (
   data_sign TEXT NOT NULL,
   version TEXT NOT NULL,
   created_at DATETIME NOT NULL,
-  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (name, version)
 );
 CREATE TRIGGER config_versions_updated_at AFTER UPDATE ON config_versions
   FOR EACH ROW BEGIN UPDATE config_versions SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id; END;
@@ -394,6 +423,13 @@ CREATE INDEX entities_route_rules_id ON entities (route_rules_id);
 CREATE TRIGGER entities_updated_at AFTER UPDATE ON entities
   FOR EACH ROW BEGIN UPDATE entities SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id; END;
 
+-- create entity_id_seq
+DROP TABLE IF EXISTS entity_id_seq;
+CREATE TABLE entity_id_seq (
+  name TEXT NOT NULL PRIMARY KEY,
+  next_seq INTEGER NOT NULL DEFAULT 1
+);
+
 -- create quota_plans
 DROP TABLE IF EXISTS quota_plans;
 CREATE TABLE quota_plans (
@@ -486,6 +522,35 @@ CREATE TABLE route_rules (
 CREATE INDEX route_rules_enabled ON route_rules (enabled);
 CREATE TRIGGER route_rules_updated_at AFTER UPDATE ON route_rules
   FOR EACH ROW BEGIN UPDATE route_rules SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id; END;
+
+-- create operation_logs (操作日志表)
+DROP TABLE IF EXISTS operation_logs;
+CREATE TABLE operation_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  log_id TEXT NOT NULL,
+  operator_type INTEGER NOT NULL DEFAULT 0,
+  operator_id INTEGER NOT NULL DEFAULT 0,
+  operator_name TEXT NOT NULL DEFAULT '',
+  action TEXT NOT NULL,
+  resource_type TEXT NOT NULL,
+  resource_id TEXT NOT NULL DEFAULT '',
+  resource_name TEXT NOT NULL DEFAULT '',
+  resource_parent_id TEXT NOT NULL DEFAULT '',
+  status INTEGER NOT NULL DEFAULT 1,
+  error_msg TEXT NOT NULL DEFAULT '',
+  change_summary TEXT,
+  request_path TEXT NOT NULL DEFAULT '',
+  request_method TEXT NOT NULL DEFAULT '',
+  client_ip TEXT NOT NULL DEFAULT '',
+  user_agent TEXT NOT NULL DEFAULT '',
+  created_at DATETIME NOT NULL
+);
+CREATE INDEX operation_logs_operator ON operation_logs (operator_type, operator_id);
+CREATE INDEX operation_logs_resource ON operation_logs (resource_type, resource_id);
+CREATE INDEX operation_logs_action ON operation_logs (action);
+CREATE INDEX operation_logs_created_at ON operation_logs (created_at);
+CREATE INDEX operation_logs_log_id ON operation_logs (log_id);
+CREATE INDEX operation_logs_resource_parent ON operation_logs (resource_parent_id);
 
 -- insert default user
 INSERT INTO users (id, name, password, scopes, created_at) VALUES (1, 'admin', 'admin', 'System', CURRENT_TIMESTAMP);

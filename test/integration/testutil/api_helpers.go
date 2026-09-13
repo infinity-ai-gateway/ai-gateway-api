@@ -1,8 +1,23 @@
+// Copyright(c) 2026 The Rainway AI Gateway (壬远AI网关) Authors.
+//
+//Licensed under the Apache License, Version 2.0 (the "License");
+//you may not use this file except in compliance with the License.
+//You may obtain a copy of the License at
+//
+//http://www.apache.org/licenses/LICENSE-2.0
+//
+//Unless required by applicable law or agreed to in writing, software
+//distributed under the License is distributed on an "AS IS" BASIS,
+//WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//See the License for the specific language governing permissions and
+//limitations under the License.
+
 package testutil
 
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 // CreateEntityType 创建 Entity-Type，返回 type_name
@@ -50,6 +65,12 @@ func CreateEntity(name, typeName, parentID string) (string, error) {
 
 // CreateAPIKey 创建 API-Key，返回 id
 func CreateAPIKey(description string, entityID string) (string, error) {
+	id, _, err := CreateAPIKeyWithKey(description, entityID)
+	return id, err
+}
+
+// CreateAPIKeyWithKey 创建 API-Key，返回 id 与 key 值
+func CreateAPIKeyWithKey(description string, entityID string) (string, string, error) {
 	body := map[string]interface{}{
 		"description": description,
 	}
@@ -58,16 +79,20 @@ func CreateAPIKey(description string, entityID string) (string, error) {
 	}
 	resp, err := GetClient().Post("/open-api/v1/api-keys", body)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if resp.ErrNum != 200 {
-		return "", fmt.Errorf("create api-key failed: %d %s", resp.ErrNum, resp.ErrMsg)
+		return "", "", fmt.Errorf("create api-key failed: %d %s", resp.ErrNum, resp.ErrMsg)
 	}
 	id, err := GetDataField(resp, "id")
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return id.(string), nil
+	key, err := GetDataField(resp, "key")
+	if err != nil {
+		return "", "", err
+	}
+	return id.(string), key.(string), nil
 }
 
 // CreateProvider 创建 Provider，返回 name
@@ -411,4 +436,104 @@ func FieldExists(resp *APIResponse, field string) (bool, error) {
 		return false, err
 	}
 	return !ok, nil
+}
+
+// OperationLogEntry 是查询操作日志返回的单个条目结构（仅包含测试常用字段）。
+type OperationLogEntry struct {
+	ID            float64                `json:"id"`
+	Action        string                 `json:"action"`
+	ResourceType  string                 `json:"resource_type"`
+	ResourceID    string                 `json:"resource_id"`
+	ResourceName  string                 `json:"resource_name"`
+	Status        float64                `json:"status"`
+	ErrorMsg      string                 `json:"error_msg"`
+	ClientIP      string                 `json:"client_ip"`
+	UserAgent     string                 `json:"user_agent"`
+	RequestPath   string                 `json:"request_path"`
+	RequestMethod string                 `json:"request_method"`
+	CreatedAt     float64                `json:"created_at"`
+	ChangeSummary map[string]interface{} `json:"change_summary"`
+}
+
+// OperationLogListResult 是 GET /operation-logs 的分页结果。
+type OperationLogListResult struct {
+	List       []OperationLogEntry `json:"list"`
+	Pagination struct {
+		Page     int   `json:"page"`
+		PageSize int   `json:"page_size"`
+		Total    int64 `json:"total"`
+	} `json:"pagination"`
+}
+
+// QueryOperationLogs 查询操作日志列表。
+func QueryOperationLogs(query map[string]string) (*OperationLogListResult, *APIResponse, error) {
+	resp, err := GetClient().Get("/open-api/v1/operation-logs", query)
+	if err != nil {
+		return nil, nil, err
+	}
+	if resp.ErrNum != 200 {
+		return nil, resp, fmt.Errorf("query operation logs failed: %d %s", resp.ErrNum, resp.ErrMsg)
+	}
+	var result OperationLogListResult
+	if err := UnmarshalData(resp, &result); err != nil {
+		return nil, resp, fmt.Errorf("unmarshal operation logs: %w", err)
+	}
+	return &result, resp, nil
+}
+
+// WaitForOperationLog 轮询等待匹配 filter 的操作日志出现，默认最长等待 10 秒。
+func WaitForOperationLog(filter map[string]string, timeout time.Duration) (*OperationLogEntry, error) {
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		result, _, err := QueryOperationLogs(filter)
+		if err != nil {
+			return nil, err
+		}
+		if len(result.List) > 0 {
+			return &result.List[0], nil
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return nil, fmt.Errorf("operation log not found after %v, filter=%v", timeout, filter)
+}
+
+// ResetGlobalRouteRules 清空全局路由规则。
+func ResetGlobalRouteRules() error {
+	resp, err := GetClient().Put("/open-api/v1/global-route-rules", map[string]interface{}{
+		"rules": []interface{}{},
+	})
+	if err != nil {
+		return err
+	}
+	if resp.ErrNum != 200 {
+		return fmt.Errorf("reset global route rules failed: %d %s", resp.ErrNum, resp.ErrMsg)
+	}
+	return nil
+}
+
+// SetGlobalRouteRules 设置全局路由规则。
+func SetGlobalRouteRules(rules []interface{}) error {
+	resp, err := GetClient().Put("/open-api/v1/global-route-rules", map[string]interface{}{
+		"rules": rules,
+	})
+	if err != nil {
+		return err
+	}
+	if resp.ErrNum != 200 {
+		return fmt.Errorf("set global route rules failed: %d %s", resp.ErrNum, resp.ErrMsg)
+	}
+	return nil
+}
+
+// SimpleRouteRule 构造一条最简单的 global route rule，用于集成测试。
+func SimpleRouteRule(name, clusterName string) map[string]interface{} {
+	return map[string]interface{}{
+		"name":      name,
+		"cond":      "default_t()",
+		"targets":   []interface{}{map[string]interface{}{"cluster_name": clusterName, "model": "", "weight": 100}},
+		"fallbacks": []interface{}{},
+	}
 }

@@ -1,3 +1,17 @@
+// Copyright(c) 2026 The Rainway AI Gateway (壬远AI网关) Authors.
+//
+//Licensed under the Apache License, Version 2.0 (the "License");
+//you may not use this file except in compliance with the License.
+//You may obtain a copy of the License at
+//
+//http://www.apache.org/licenses/LICENSE-2.0
+//
+//Unless required by applicable law or agreed to in writing, software
+//distributed under the License is distributed on an "AS IS" BASIS,
+//WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//See the License for the specific language governing permissions and
+//limitations under the License.
+
 package openapi
 
 import (
@@ -34,6 +48,8 @@ func TestOpenAPI_Schema(t *testing.T) {
 	t.Run("model_prices", testModelPriceSchema)
 	t.Run("route_tables", testRouteTableSchema)
 	t.Run("global_route_rules", testGlobalRouteRulesSchema)
+	t.Run("epp_pool", testEppPoolSchema)
+	t.Run("epp_assignments", testEppAssignmentsSchema)
 }
 
 // ---------- entity-types ----------
@@ -369,10 +385,107 @@ func testClusterSchema(t *testing.T) {
 	testutil.AssertSuccess(t, patchResp)
 	testutil.AssertSchema(t, patchResp, ClusterSchema)
 
+	// EPP 模式集群：balance_mode/epp_config 字段与嵌套结构校验。
+	eppProviderName := testutil.UniqueProviderName()
+	_, err = testutil.CreateProvider(eppProviderName)
+	require.NoError(t, err)
+
+	eppClusterName := testutil.UniqueClusterName()
+	eppClusterBody := map[string]interface{}{
+		"name":         eppClusterName,
+		"description":  "schema test epp",
+		"balance_mode": "EPP",
+		"epp_config": map[string]interface{}{
+			"scheduling_profile":       "latency-first",
+			"cache_affinity":           "high",
+			"prefix_cache_affinity":    true,
+			"session_affinity_enabled": true,
+			"session_affinity_header":  "x-session-id",
+			"kv_cache_utilization_max": 0.85,
+			"flow_control": map[string]interface{}{
+				"max_requests":          200,
+				"queue_ttl":             45,
+				"no_endpoint_queue_ttl": 120,
+				"enable_eviction":       true,
+			},
+		},
+		"llm_config": map[string]interface{}{
+			"models":   []string{"deepseek-chat"},
+			"provider": eppProviderName,
+		},
+	}
+	eppCreateResp, err := testutil.GetClient().Post("/open-api/v1/clusters", eppClusterBody)
+	require.NoError(t, err)
+	testutil.AssertSuccess(t, eppCreateResp)
+	testutil.AssertSchema(t, eppCreateResp, ClusterSchema)
+
+	eppOneResp, err := testutil.GetClient().Get("/open-api/v1/clusters/" + eppClusterName)
+	require.NoError(t, err)
+	testutil.AssertSuccess(t, eppOneResp)
+	testutil.AssertSchema(t, eppOneResp, ClusterSchema)
+
+	// epp_config 原样回读（存储保留用户原始 JSON，未携带字段不落盘）。
+	assertEppConfigEcho(t, eppOneResp.Data, map[string]interface{}{
+		"scheduling_profile":       "latency-first",
+		"cache_affinity":           "high",
+		"prefix_cache_affinity":    true,
+		"session_affinity_enabled": true,
+		"session_affinity_header":  "x-session-id",
+		"kv_cache_utilization_max": 0.85,
+		"flow_control": map[string]interface{}{
+			"max_requests":          float64(200),
+			"queue_ttl":             float64(45),
+			"no_endpoint_queue_ttl": float64(120),
+			"enable_eviction":       true,
+		},
+	})
+
+	// WRR 集群携带 epp_config（休眠保留）：创建成功且 GET 原样返回。
+	dormantClusterName := testutil.UniqueClusterName()
+	dormantResp, err := testutil.GetClient().Post("/open-api/v1/clusters", map[string]interface{}{
+		"name":         dormantClusterName,
+		"balance_mode": "WRR",
+		"epp_config":   map[string]interface{}{"scheduling_profile": "throughput-first"},
+		"llm_config": map[string]interface{}{
+			"models":   []string{"deepseek-chat"},
+			"provider": eppProviderName,
+		},
+	})
+	require.NoError(t, err)
+	testutil.AssertSuccess(t, dormantResp)
+	testutil.AssertSchema(t, dormantResp, ClusterSchema)
+
+	dormantOneResp, err := testutil.GetClient().Get("/open-api/v1/clusters/" + dormantClusterName)
+	require.NoError(t, err)
+	testutil.AssertSuccess(t, dormantOneResp)
+	testutil.AssertSchema(t, dormantOneResp, ClusterSchema)
+	assertEppConfigEcho(t, dormantOneResp.Data, map[string]interface{}{
+		"scheduling_profile": "throughput-first",
+	})
+
 	t.Cleanup(func() {
 		testutil.DeleteCluster(clusterName)
+		testutil.DeleteCluster(eppClusterName)
+		testutil.DeleteCluster(dormantClusterName)
 		testutil.DeleteProvider(providerName)
+		testutil.DeleteProvider(eppProviderName)
 	})
+}
+
+// assertEppConfigEcho 校验 GET cluster 回读中 epp_config 与写入值一致（原样回读）。
+func assertEppConfigEcho(t *testing.T, data []byte, want map[string]interface{}) {
+	t.Helper()
+	var payload map[string]interface{}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("unmarshal cluster data: %v", err)
+	}
+	eppConfig, ok := payload["epp_config"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("epp_config is not an object: %v", payload["epp_config"])
+	}
+	for key, wantVal := range want {
+		require.Equal(t, wantVal, eppConfig[key], "epp_config.%s echo mismatch", key)
+	}
 }
 
 // ---------- certificates ----------
@@ -629,3 +742,172 @@ func testGlobalRouteRulesSchema(t *testing.T) {
 }
 
 
+
+// ---------- epp-pool ----------
+
+func testEppPoolSchema(t *testing.T) {
+	// EPP 池为单例：本用例 PATCH 自己的组布局后回读。
+	patchResp, err := testutil.GetClient().Patch("/open-api/v1/epp-pool", map[string]interface{}{
+		"groups": []interface{}{
+			map[string]interface{}{
+				"name": "g1",
+				"instances": []interface{}{
+					map[string]interface{}{"id": "epp-a", "host": "10.0.0.1", "port": 9002},
+					map[string]interface{}{"id": "epp-b", "host": "10.0.0.2", "port": 9002},
+				},
+			},
+			map[string]interface{}{
+				"name": "g2",
+				"instances": []interface{}{
+					map[string]interface{}{"id": "epp-c", "host": "10.0.0.3", "port": 9002},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	testutil.AssertSuccess(t, patchResp)
+	testutil.AssertSchema(t, patchResp, EppPoolSchema)
+
+	getResp, err := testutil.GetClient().Get("/open-api/v1/epp-pool")
+	require.NoError(t, err)
+	testutil.AssertSuccess(t, getResp)
+	testutil.AssertSchema(t, getResp, EppPoolSchema)
+
+	// 定向断言：name 为配置的单例池名，组与实例字段完整回读。
+	nameVal, err := testutil.GetDataField(getResp, "name")
+	require.NoError(t, err)
+	require.Equal(t, "EPP.pool", nameVal)
+	groupsVal, err := testutil.GetDataField(getResp, "groups")
+	require.NoError(t, err)
+	groups := groupsVal.([]interface{})
+	require.Len(t, groups, 2)
+	g1 := groups[0].(map[string]interface{})
+	require.Equal(t, "g1", g1["name"])
+	insts := g1["instances"].([]interface{})
+	require.Len(t, insts, 2)
+	inst0 := insts[0].(map[string]interface{})
+	require.Equal(t, "epp-a", inst0["id"])
+	require.Equal(t, "10.0.0.1", inst0["host"])
+	require.Equal(t, float64(9002), inst0["port"])
+}
+
+// ---------- epp-assignments ----------
+
+func testEppAssignmentsSchema(t *testing.T) {
+	// PATCH 自己的组布局（EPP 池单例，不依赖其他用例的池状态）。
+	patchResp, err := testutil.GetClient().Patch("/open-api/v1/epp-pool", map[string]interface{}{
+		"groups": []interface{}{
+			map[string]interface{}{
+				"name": "g1",
+				"instances": []interface{}{
+					map[string]interface{}{"id": "epp-a", "host": "10.0.0.1", "port": 9002},
+					map[string]interface{}{"id": "epp-b", "host": "10.0.0.2", "port": 9002},
+				},
+			},
+			map[string]interface{}{
+				"name": "g2",
+				"instances": []interface{}{
+					map[string]interface{}{"id": "epp-c", "host": "10.0.0.3", "port": 9002},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	testutil.AssertSuccess(t, patchResp)
+
+	providerName := testutil.UniqueProviderName()
+	_, err = testutil.CreateProvider(providerName)
+	require.NoError(t, err)
+
+	clusterName := testutil.UniqueClusterName()
+	createResp, err := testutil.GetClient().Post("/open-api/v1/clusters", map[string]interface{}{
+		"name":         clusterName,
+		"balance_mode": "EPP",
+		"epp_config":   map[string]interface{}{"scheduling_profile": "balanced"},
+		"llm_config": map[string]interface{}{
+			"models":   []string{"deepseek-chat"},
+			"provider": providerName,
+		},
+	})
+	require.NoError(t, err)
+	testutil.AssertSuccess(t, createResp)
+
+	t.Cleanup(func() {
+		testutil.DeleteCluster(clusterName)
+		testutil.DeleteProvider(providerName)
+	})
+
+	// 全量视图：结构 + 定向断言（该 cluster 已自动分配、g2 空闲）。
+	viewResp, err := testutil.GetClient().Get("/open-api/v1/epp-assignments")
+	require.NoError(t, err)
+	testutil.AssertSuccess(t, viewResp)
+	testutil.AssertSchema(t, viewResp, EppAssignmentsViewSchema)
+
+	assertAssignmentEntry(t, viewResp.Data, clusterName, false)
+
+	idleVal, err := testutil.GetDataField(viewResp, "idle_groups")
+	require.NoError(t, err)
+	require.Contains(t, idleVal, "g2")
+	unassignedVal, err := testutil.GetDataField(viewResp, "unassigned_clusters")
+	require.NoError(t, err)
+	require.NotContains(t, unassignedVal, clusterName)
+
+	// 单条过滤查询：同结构 schema。
+	oneResp, err := testutil.GetClient().Get("/open-api/v1/epp-assignments", map[string]string{
+		"cluster": clusterName,
+	})
+	require.NoError(t, err)
+	testutil.AssertSuccess(t, oneResp)
+	testutil.AssertSchema(t, oneResp, EppAssignmentsViewSchema)
+	assertAssignmentEntry(t, oneResp.Data, clusterName, false)
+
+	// 手工覆写后单条响应结构（standby 换为另一实例）。
+	entry := findAssignmentEntry(t, oneResp.Data, clusterName)
+	standby := entry["standby"].(map[string]interface{})
+	putResp, err := testutil.GetClient().Put("/open-api/v1/epp-assignments/"+clusterName, map[string]interface{}{
+		"group_name":          "g1",
+		"primary_instance_id": standby["id"],
+	})
+	require.NoError(t, err)
+	testutil.AssertSuccess(t, putResp)
+	testutil.AssertSchema(t, putResp, EppClusterAssignmentOverrideSchema)
+
+	putPrimary, err := testutil.GetDataField(putResp, "primary")
+	require.NoError(t, err)
+	require.Equal(t, standby["id"], putPrimary.(map[string]interface{})["id"])
+}
+
+// findAssignmentEntry 从全量视图中取出指定 cluster 的分配条目。
+func findAssignmentEntry(t *testing.T, data []byte, clusterName string) map[string]interface{} {
+	t.Helper()
+	var payload map[string]interface{}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("unmarshal assignments data: %v", err)
+	}
+	clusters := payload["clusters"].([]interface{})
+	for _, item := range clusters {
+		entry := item.(map[string]interface{})
+		if entry["cluster"] == clusterName {
+			return entry
+		}
+	}
+	t.Fatalf("cluster %s not found in assignments view", clusterName)
+	return nil
+}
+
+// assertAssignmentEntry 定向断言指定 cluster 已分配（group/primary/standby 非空）。
+func assertAssignmentEntry(t *testing.T, data []byte, clusterName string, unassigned bool) {
+	t.Helper()
+	entry := findAssignmentEntry(t, data, clusterName)
+	require.Equal(t, unassigned, entry["degraded"].(bool))
+	if unassigned {
+		require.Nil(t, entry["primary"])
+		return
+	}
+	require.NotNil(t, entry["group"])
+	primary, ok := entry["primary"].(map[string]interface{})
+	require.True(t, ok, "primary should be an object")
+	require.NotEmpty(t, primary["id"])
+	require.NotEmpty(t, primary["host"])
+	require.NotNil(t, entry["standby"])
+}

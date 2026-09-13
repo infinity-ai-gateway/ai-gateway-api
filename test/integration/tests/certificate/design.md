@@ -19,13 +19,13 @@ Certificate 模块负责 TLS 证书的管理，包括创建、列表、详情、
 
 | 接口 | 测试用例数 |
 |------|-----------|
-| 创建证书 | 3 |
+| 创建证书 | 13 |
 | 证书列表 | 1 |
 | 证书详情（按名称） | 2 |
 | 证书详情（按 ID 或名称） | 2 |
 | 设为默认证书 | 1 |
 | 删除证书 | 2 |
-| **合计** | **11** |
+| **合计** | **21** |
 
 ## 4. 认证方式
 
@@ -99,6 +99,16 @@ certificate/
 | CERT-1-001 | 创建非默认证书 | 正常参数 | 返回元数据不含内容字段 |
 | CERT-1-002 | 创建默认证书 | 正常参数 | 旧默认自动变为非默认 |
 | CERT-1-003 | 证书与密钥不匹配 | 异常参数 | 验证 ErrNum=422 或 500 |
+| CERT-1-004 | cert_name 含 `/` | 异常参数 | 验证 ErrNum=422（Issue #133） |
+| CERT-1-005 | cert_name 含 `?` | 异常参数 | 验证 ErrNum=422（Issue #133） |
+| CERT-1-006 | cert_name 含 `#` | 异常参数 | 验证 ErrNum=422（Issue #133） |
+| CERT-1-007 | cert_name 含空格 | 异常参数 | 验证 ErrNum=422（Issue #133） |
+| CERT-1-008 | cert_name 含 `%` | 异常参数 | 验证 ErrNum=422（Issue #133） |
+| CERT-1-009 | cert_name 长度为 1 | 异常参数 | 验证 ErrNum=422 |
+| CERT-1-010 | cert_name 长度为 65 | 异常参数 | 验证 ErrNum=422 |
+| CERT-1-011 | cert_name 以 `-` 开头 | 异常参数 | 验证 ErrNum=422 |
+| CERT-1-012 | cert_name 以 `_` 结尾 | 异常参数 | 验证 ErrNum=422 |
+| CERT-1-013 | cert_name 含 `.`（合法） | 正常参数 | 验证含点证书名创建成功（Issue #133） |
 
 ### 6.4 测试场景详细设计
 
@@ -233,6 +243,88 @@ certificate/
 **ErrNum**：422 或 500  
 **ErrMsg**：证书与密钥不匹配或解析失败的错误信息  
 **Data**：null
+
+---
+
+#### 6.4.4 CERT-1-004 ~ CERT-1-012：cert_name 命名规范校验（异常参数）
+
+##### 设计思路
+
+验证 `cert_name` 不符合命名规范（[CertName](../../../design-docs/api-define/OpenAPI接口定义/00-common.md)）时创建请求返回 422。覆盖 Issue #133 报告的 URL 语义字符（`/`、`?`、`#`、空格、`%`）与长度/首尾约束边界。除 `cert_name` 外的参数均合法（使用 `GenerateTestCert` 生成匹配的证书与密钥），确保唯一失败原因是名称非法。
+
+> 背景：创建侧原本无字符集限制，含 `/` 的证书创建成功后 DELETE 路由（单路径段绑定）无法寻址，形成"存在但不可删除"的残留。本组用例防止该缺陷回归。
+
+##### 前提数据准备
+
+无（依赖测试前置创建的默认证书，非法名请求不产生任何数据）。
+
+##### 执行步骤
+
+1. 发送 POST 请求到 `/open-api/v1/certificates`，`cert_name` 分别取下列非法值，其余参数合法。
+2. 验证返回 ErrNum=422。
+
+##### 请求参数
+
+| 用例 | cert_name | 非法原因 |
+|------|-----------|---------|
+| CERT-1-004 | `demo/child` | 含 `/` |
+| CERT-1-005 | `demo?x=1` | 含 `?` |
+| CERT-1-006 | `demo#1` | 含 `#` |
+| CERT-1-007 | `demo cert` | 含空格 |
+| CERT-1-008 | `demo%2F` | 含 `%` |
+| CERT-1-009 | `a` | 长度 1（小于下限 2） |
+| CERT-1-010 | 65 个 `a` | 长度 65（超过上限 64） |
+| CERT-1-011 | `-demo` | 以 `-` 开头 |
+| CERT-1-012 | `demo_` | 以 `_` 结尾 |
+
+##### 预期返回结果
+
+**ErrNum**：422  
+**ErrMsg**：cert_name 包含非法字符或长度不合法的参数错误信息  
+**Data**：null
+
+---
+
+#### 6.4.13 CERT-1-013：cert_name 含 `.`（正常参数）
+
+##### 设计思路
+
+验证含 `.` 的证书名（如 `<唯一名>.qa`）属于合法字符集，创建成功并可正常删除，作为 CERT-1-004~012 的对照组。
+
+##### 前提数据准备
+
+无。
+
+##### 执行步骤
+
+1. 发送 POST 请求到 `/open-api/v1/certificates`，`cert_name` 为含 `.` 的唯一名，其余参数合法。
+2. 验证返回成功且元数据正确（不含内容字段）。
+3. 测试清理阶段删除该证书。
+
+##### 请求参数
+
+```json
+{
+    "cert_name": "<unique>.qa",
+    "description": "命名规范校验",
+    "is_default": false,
+    "cert_file_content": "-----BEGIN CERTIFICATE-----...-----END CERTIFICATE-----",
+    "key_file_content": "-----BEGIN RSA PRIVATE KEY-----...-----END RSA PRIVATE KEY-----"
+}
+```
+
+##### 预期返回结果
+
+**ErrNum**：200  
+**ErrMsg**：success
+
+**Data 字段校验**：
+
+| 字段 | 预期值 | 校验方式 |
+|------|--------|---------|
+| cert_name | 与请求一致 | Equals |
+| cert_file_content | 不存在 | NotExists |
+| key_file_content | 不存在 | NotExists |
 
 ---
 

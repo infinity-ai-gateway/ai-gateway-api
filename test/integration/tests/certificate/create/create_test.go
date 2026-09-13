@@ -1,7 +1,22 @@
+// Copyright(c) 2026 The Rainway AI Gateway (壬远AI网关) Authors.
+//
+//Licensed under the Apache License, Version 2.0 (the "License");
+//you may not use this file except in compliance with the License.
+//You may obtain a copy of the License at
+//
+//http://www.apache.org/licenses/LICENSE-2.0
+//
+//Unless required by applicable law or agreed to in writing, software
+//distributed under the License is distributed on an "AS IS" BASIS,
+//WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//See the License for the specific language governing permissions and
+//limitations under the License.
+
 package certificate_test
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -37,6 +52,7 @@ func TestCertificate_Create(t *testing.T) {
 
 	cert1 := testutil.UniqueCertName()
 	certDefault := testutil.UniqueCertName()
+	certDot := testutil.UniqueCertName() + ".qa"
 
 	t.Run("CERT-1-001 创建非默认证书", func(t *testing.T) {
 		resp, err := testutil.CreateCertificate(cert1, false)
@@ -83,9 +99,59 @@ func TestCertificate_Create(t *testing.T) {
 		}
 	})
 
+	// CERT-1-004 ~ CERT-1-012: cert_name 命名规范校验（Issue #133）
+	createWithName := func(t *testing.T, certName string) *testutil.APIResponse {
+		t.Helper()
+		certPEM, keyPEM, err := testutil.GenerateTestCert(certName)
+		if err != nil {
+			t.Fatalf("generate test cert failed: %v", err)
+		}
+		resp, err := testutil.GetClient().Post("/open-api/v1/certificates", map[string]interface{}{
+			"cert_name":         certName,
+			"description":       "命名规范校验",
+			"is_default":        false,
+			"cert_file_content": certPEM,
+			"key_file_content":  keyPEM,
+		})
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		return resp
+	}
+
+	invalidNameCases := []struct {
+		name     string
+		certName string
+	}{
+		{"CERT-1-004 cert_name 含 /", "demo/child"},
+		{"CERT-1-005 cert_name 含 ?", "demo?x=1"},
+		{"CERT-1-006 cert_name 含 #", "demo#1"},
+		{"CERT-1-007 cert_name 含空格", "demo cert"},
+		{"CERT-1-008 cert_name 含 %", "demo%2F"},
+		{"CERT-1-009 cert_name 长度为 1", "a"},
+		{"CERT-1-010 cert_name 长度为 65", strings.Repeat("a", 65)},
+		{"CERT-1-011 cert_name 以 - 开头", "-demo"},
+		{"CERT-1-012 cert_name 以 _ 结尾", "demo_"},
+	}
+	for _, tc := range invalidNameCases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := createWithName(t, tc.certName)
+			if resp.ErrNum != 422 {
+				t.Errorf("expected ErrNum=422, got ErrNum=%d, ErrMsg=%s", resp.ErrNum, resp.ErrMsg)
+			}
+		})
+	}
+
+	t.Run("CERT-1-013 cert_name 含 .（合法）", func(t *testing.T) {
+		resp := createWithName(t, certDot)
+		testutil.AssertSuccess(t, resp)
+		assertCertMeta(t, resp, certDot)
+	})
+
 	t.Cleanup(func() {
 		testutil.DeleteCertificate(cert1)
 		testutil.DeleteCertificate(certDefault)
 		testutil.DeleteCertificate(defaultCert)
+		testutil.DeleteCertificate(certDot)
 	})
 }

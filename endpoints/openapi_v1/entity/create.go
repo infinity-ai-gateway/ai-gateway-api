@@ -15,8 +15,6 @@
 package entity
 
 import (
-	"context"
-	"fmt"
 	"net/http"
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib"
@@ -85,9 +83,9 @@ func EntityCreateAction(req *http.Request) (interface{}, error) {
 	}
 
 	if param.EntityID == nil || *param.EntityID == "" {
-		generatedID, err := generateEntityID(req.Context())
+		generatedID, err := container.EntityIDGenerator.Generate(req.Context())
 		if err != nil {
-			return nil, err
+			return nil, xerror.WrapModelError(err)
 		}
 		param.EntityID = &generatedID
 	}
@@ -122,25 +120,4 @@ func EntityCreateAction(req *http.Request) (interface{}, error) {
 	}
 
 	return container.EntityManager.FetchEntity(req.Context(), &entity.EntityFilter{EntityID: param.EntityID})
-}
-
-func generateEntityID(ctx context.Context) (string, error) {
-	list, err := container.EntityManager.FetchEntityList(ctx, &entity.EntityFilter{})
-	if err != nil {
-		return "", err
-	}
-
-	maxSeq := 0
-	for _, entity := range list {
-		if entity.EntityID != nil {
-			var seq int
-			if _, err := fmt.Sscanf(*entity.EntityID, "entity-%d", &seq); err == nil {
-				if seq > maxSeq {
-					maxSeq = seq
-				}
-			}
-		}
-	}
-
-	return fmt.Sprintf("entity-%d", maxSeq+1), nil
 }

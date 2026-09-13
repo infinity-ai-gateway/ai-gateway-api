@@ -91,5 +91,5 @@ func execAPIProcess(ctx context.Context, param *RequestParams) (interface{}, err
 		return resp, nil
 	}
 
-	return nil, xerror.WrapParamError(fmt.Errorf(errStr))
+	return nil, xerror.WrapParamError(fmt.Errorf("%s", errStr))
 }

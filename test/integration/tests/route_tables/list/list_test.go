@@ -1,3 +1,17 @@
+// Copyright(c) 2026 The Rainway AI Gateway (壬远AI网关) Authors.
+//
+//Licensed under the Apache License, Version 2.0 (the "License");
+//you may not use this file except in compliance with the License.
+//You may obtain a copy of the License at
+//
+//http://www.apache.org/licenses/LICENSE-2.0
+//
+//Unless required by applicable law or agreed to in writing, software
+//distributed under the License is distributed on an "AS IS" BASIS,
+//WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//See the License for the specific language governing permissions and
+//limitations under the License.
+
 package route_tables_test
 
 import (
@@ -5,8 +19,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/rainway-ai-gateway/ai-gateway-api/integration/testutil"
+	"github.com/stretchr/testify/assert"
 )
 
 var sm *testutil.ServerManager
@@ -92,7 +106,7 @@ func TestRouteTables_List(t *testing.T) {
 		assert.GreaterOrEqual(t, len(list), 3)
 		assert.True(t, hasType(list, "global"))
 		assert.True(t, hasType(list, "entity"))
-		assert.True(t, hasType(list, "apikey"))
+		assert.True(t, hasType(list, "api_key"))
 	})
 
 	t.Run("RT-1-002 按 type=global 过滤", func(t *testing.T) {
@@ -121,8 +135,8 @@ func TestRouteTables_List(t *testing.T) {
 		}
 	})
 
-	t.Run("RT-1-004 按 type=apikey 过滤", func(t *testing.T) {
-		resp, err := testutil.GetClient().Get("/open-api/v1/route-tables", map[string]string{"type": "apikey"})
+	t.Run("RT-1-004 按 type=api_key 过滤", func(t *testing.T) {
+		resp, err := testutil.GetClient().Get("/open-api/v1/route-tables", map[string]string{"type": "api_key"})
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
 		}
@@ -130,7 +144,7 @@ func TestRouteTables_List(t *testing.T) {
 		var data map[string]interface{}
 		json.Unmarshal(resp.Data, &data)
 		for _, item := range data["list"].([]interface{}) {
-			assert.Equal(t, "apikey", item.(map[string]interface{})["type"])
+			assert.Equal(t, "api_key", item.(map[string]interface{})["type"])
 		}
 	})
 
@@ -143,7 +157,7 @@ func TestRouteTables_List(t *testing.T) {
 		var data map[string]interface{}
 		json.Unmarshal(resp.Data, &data)
 		list := data["list"].([]interface{})
-		assert.GreaterOrEqual(t, len(list), 1, "按 apiKeyID 过滤应至少返回一条 apikey 路由表")
+		assert.GreaterOrEqual(t, len(list), 1, "按 apiKeyID 过滤应至少返回一条 api_key 路由表")
 		for _, item := range list {
 			assert.Equal(t, apiKeyID, item.(map[string]interface{})["owner"])
 		}

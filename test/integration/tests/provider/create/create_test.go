@@ -1,3 +1,17 @@
+// Copyright(c) 2026 The Rainway AI Gateway (壬远AI网关) Authors.
+//
+//Licensed under the Apache License, Version 2.0 (the "License");
+//you may not use this file except in compliance with the License.
+//You may obtain a copy of the License at
+//
+//http://www.apache.org/licenses/LICENSE-2.0
+//
+//Unless required by applicable law or agreed to in writing, software
+//distributed under the License is distributed on an "AS IS" BASIS,
+//WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//See the License for the specific language governing permissions and
+//limitations under the License.
+
 package provider_test
 
 import (
@@ -41,6 +55,7 @@ func TestProvider_Create(t *testing.T) {
 	providerMin := testutil.UniqueProviderName()
 	providerFull := testutil.UniqueProviderName()
 	providerAnthropic := testutil.UniqueProviderName()
+	providerGemini := testutil.UniqueProviderName()
 	providerNoInstName := testutil.UniqueProviderName()
 	providerDup := testutil.UniqueProviderName()
 
@@ -135,6 +150,34 @@ func TestProvider_Create(t *testing.T) {
 				json.Unmarshal(resp.Data, &data)
 				protocols, _ := data["model_protocols"].([]interface{})
 				assert.Equal(t, []interface{}{"anthropic"}, protocols)
+			},
+		},
+		{
+			name: "PV-1-002c 创建 gemini 协议 Provider",
+			body: map[string]interface{}{
+				"name": providerGemini,
+				"keys": []interface{}{
+					map[string]interface{}{
+						"name": "key-primary",
+						"key":  "AIzaSyaaaaaaaaaaaa",
+					},
+				},
+				"instance_pool": []interface{}{
+					map[string]interface{}{
+						
+						"addr":   "generativelanguage.googleapis.com",
+						"weight": 100,
+						"port":   443,
+					},
+				},
+				"model_protocols": []string{"gemini"},
+			},
+			wantCode: 200,
+			check: func(t *testing.T, resp *testutil.APIResponse) {
+				var data map[string]interface{}
+				json.Unmarshal(resp.Data, &data)
+				protocols, _ := data["model_protocols"].([]interface{})
+				assert.Equal(t, []interface{}{"gemini"}, protocols)
 			},
 		},
 		{
@@ -348,6 +391,7 @@ func TestProvider_Create(t *testing.T) {
 		testutil.DeleteProvider(providerMin)
 		testutil.DeleteProvider(providerFull)
 		testutil.DeleteProvider(providerAnthropic)
+		testutil.DeleteProvider(providerGemini)
 		testutil.DeleteProvider(providerNoInstName)
 		testutil.DeleteProvider(providerDup)
 	})

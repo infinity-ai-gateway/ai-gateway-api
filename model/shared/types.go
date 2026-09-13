@@ -168,10 +168,38 @@ type RouteTableParam struct {
 }
 
 const (
+	// RouteRulesTypeAPIKey is the internal storage/BFE export value for
+	// API-Key route rules. The OpenAPI /route-tables endpoint exposes it
+	// as RouteTableTypeAPIKey ("api_key") for consistency with the API doc.
 	RouteRulesTypeAPIKey = "apikey"
 	RouteRulesTypeEntity = "entity"
 	RouteRulesTypeGlobal = "global"
 )
+
+// OpenAPI-facing route table type values, as defined in the API document.
+const (
+	RouteTableTypeAPIKey = "api_key"
+	RouteTableTypeEntity = "entity"
+	RouteTableTypeGlobal = "global"
+)
+
+// ToRouteTableType maps an internal route rules type to the value exposed by
+// the OpenAPI /route-tables endpoint.
+func ToRouteTableType(internalType string) string {
+	if internalType == RouteRulesTypeAPIKey {
+		return RouteTableTypeAPIKey
+	}
+	return internalType
+}
+
+// FromRouteTableType maps an OpenAPI /route-tables type query parameter to the
+// internal route rules type used in storage and BFE exports.
+func FromRouteTableType(apiType string) string {
+	if apiType == RouteTableTypeAPIKey {
+		return RouteRulesTypeAPIKey
+	}
+	return apiType
+}
 
 // RouteRulesFilter defines filters for querying route rules
 type RouteRulesFilter struct {

@@ -35,9 +35,10 @@ type QuotaPlanParam struct {
 
 // QuotaPlanFilter 定义配额计划过滤条件
 type QuotaPlanFilter struct {
-	ID          *int64
-	Unlimited   *bool
-	ResetPeriod []string
+	ID                *int64
+	Unlimited         *bool
+	ResetPeriod       []string
+	LastResetAtBefore *time.Time
 }
 
 // QuotaPlanStorager 定义配额计划存储接口

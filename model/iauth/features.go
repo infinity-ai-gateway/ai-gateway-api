@@ -126,6 +126,9 @@ const (
 	// model pricing
 	FeatureModelPrice Feature = "ModelPrice"
 	FeatureProvider   Feature = "Provider"
+
+	// operation logs
+	FeatureOperationLog Feature = "OperationLog"
 )
 
 var (
@@ -172,8 +175,9 @@ var scope2permission = map[string]map[Feature]Action{
 		FeatureAIRoute:    actionAll,
 		FeatureAPIKey:     actionAll,
 
-		FeatureModelPrice: actionAll,
-		FeatureProvider:   actionAll,
+		FeatureModelPrice:   actionAll,
+		FeatureProvider:     actionAll,
+		FeatureOperationLog: actionAll,
 	},
 	ScopeProduct: {
 		FeatureUser:       ActionReadAll,

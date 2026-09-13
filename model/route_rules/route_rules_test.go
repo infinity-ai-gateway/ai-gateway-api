@@ -20,8 +20,10 @@ import (
 	"testing"
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib"
+	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xerror"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/ibasic"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/icluster_conf"
+	"github.com/rainway-ai-gateway/ai-gateway-api/model/ioperlog"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/itxn"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/shared"
 	"github.com/stretchr/testify/assert"
@@ -127,6 +129,15 @@ func (s *fakeRouteRulesStorager) FetchAllRouteRules(ctx context.Context) ([]*sha
 }
 
 var _ shared.RouteRulesStorager = (*fakeRouteRulesStorager)(nil)
+
+// fakeOperationLogRecorder captures operation log entries for tests.
+type fakeOperationLogRecorder struct {
+	entries []*ioperlog.OperationLogEntry
+}
+
+func (r *fakeOperationLogRecorder) Record(ctx context.Context, entry *ioperlog.OperationLogEntry) {
+	r.entries = append(r.entries, entry)
+}
 
 func TestRouteRulesManager_CreateRouteRules(t *testing.T) {
 	ctx := context.Background()
@@ -293,6 +304,8 @@ func TestRouteRulesManager_GetGlobalRouteRules(t *testing.T) {
 
 func TestRouteRulesManager_SetGlobalRouteRules(t *testing.T) {
 	ctx := context.Background()
+	recorder := &fakeOperationLogRecorder{}
+
 	store := &fakeRouteRulesStorager{
 		fetchFn: func(ctx context.Context, ruleType string, owner *string) (*shared.RouteRulesParam, error) {
 			return nil, nil
@@ -305,11 +318,49 @@ func TestRouteRulesManager_SetGlobalRouteRules(t *testing.T) {
 		},
 	}
 	m := NewRouteRulesManager(&fakeTxn{}, store)
+	m.SetOperationLogManager(recorder)
 
 	rule, err := m.SetGlobalRouteRules(ctx, validRouteRulesParam())
 	require.NoError(t, err)
 	require.NotNil(t, rule)
 	assert.Equal(t, int64(9), *rule.ID)
+
+	require.Len(t, recorder.entries, 1)
+	entry := recorder.entries[0]
+	assert.Equal(t, string(ioperlog.ActionUpdate), entry.Action)
+	assert.Equal(t, string(ioperlog.ResourceTypeRoute), entry.ResourceType)
+	assert.Equal(t, "global", entry.ResourceID)
+	assert.Equal(t, "global", entry.ResourceName)
+	assert.Equal(t, ioperlog.StatusSuccess, entry.Status)
+	assert.NotNil(t, entry.ChangeSummary)
+}
+
+func TestRouteRulesManager_SetGlobalRouteRules_RecordsFailedOperationLog(t *testing.T) {
+	ctx := context.Background()
+	recorder := &fakeOperationLogRecorder{}
+
+	store := &fakeRouteRulesStorager{
+		fetchFn: func(ctx context.Context, ruleType string, owner *string) (*shared.RouteRulesParam, error) {
+			return nil, nil
+		},
+		createFn: func(ctx context.Context, ruleType string, owner *string, param *shared.RouteRulesParam) (int64, error) {
+			return 0, errors.New("db error")
+		},
+	}
+	m := NewRouteRulesManager(&fakeTxn{}, store)
+	m.SetOperationLogManager(recorder)
+
+	_, err := m.SetGlobalRouteRules(ctx, validRouteRulesParam())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "db error")
+
+	require.Len(t, recorder.entries, 1)
+	entry := recorder.entries[0]
+	assert.Equal(t, string(ioperlog.ActionUpdate), entry.Action)
+	assert.Equal(t, string(ioperlog.ResourceTypeRoute), entry.ResourceType)
+	assert.Equal(t, "global", entry.ResourceID)
+	assert.Equal(t, ioperlog.StatusFailed, entry.Status)
+	assert.Contains(t, entry.ErrorMsg, "db error")
 }
 
 func TestRouteRulesManager_EnsureGlobalRouteRules(t *testing.T) {
@@ -390,6 +441,7 @@ func TestRouteRulesManager_ClusterDeleteChecker(t *testing.T) {
 		err := m.ClusterDeleteChecker(ctx, product, cluster)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "Rule rule1 Refer To This Cluster")
+		assert.Equal(t, 409, xerror.Resolve(err).ErrNo)
 	})
 
 	t.Run("route rule fallback refers cluster", func(t *testing.T) {

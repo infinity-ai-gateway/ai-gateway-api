@@ -301,6 +301,9 @@ func newCluster(dc *dao.TCluster, subClusters []*icluster_conf.SubCluster, capac
 			Statuscode: dc.HealthcheckStatuscode,
 		},
 
+		BalanceMode: dc.BalanceMode,
+		EppConfig:   dc.EppConfig,
+
 		SubClusters: subClusters,
 	}
 
@@ -342,6 +345,9 @@ func newDaoClusterParam(param *icluster_conf.ClusterParam) *dao.TClusterParam {
 		Name:        param.Name,
 		ProductID:   param.ProductID,
 		Description: param.Description,
+
+		BalanceMode: param.BalanceMode,
+		EppConfig:   param.EppConfig,
 	}
 
 	if basic := param.Basic; basic != nil {

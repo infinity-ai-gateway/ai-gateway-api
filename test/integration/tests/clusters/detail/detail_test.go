@@ -1,3 +1,17 @@
+// Copyright(c) 2026 The Rainway AI Gateway (壬远AI网关) Authors.
+//
+//Licensed under the Apache License, Version 2.0 (the "License");
+//you may not use this file except in compliance with the License.
+//You may obtain a copy of the License at
+//
+//http://www.apache.org/licenses/LICENSE-2.0
+//
+//Unless required by applicable law or agreed to in writing, software
+//distributed under the License is distributed on an "AS IS" BASIS,
+//WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//See the License for the specific language governing permissions and
+//limitations under the License.
+
 package clusters_test
 
 import (
@@ -51,6 +65,26 @@ func TestClusters_Detail(t *testing.T) {
 		assert.Equal(t, "CLIENT_IP_ONLY", sticky["hash_strategy"])
 		assert.Equal(t, "", sticky["hash_header"])
 	}
+
+	t.Cleanup(func() {
+		testutil.DeleteCluster(clusterName)
+	})
+}
+
+// TestClusters_Detail_SingleCharName 验证单字符名称的集群可以正常查询。
+// 回归测试：单查 URI 参数曾要求名称至少 2 个字符，导致创建成功的单字符集群无法被查询。
+func TestClusters_Detail_SingleCharName(t *testing.T) {
+	const clusterName = "c"
+	if _, err := testutil.CreateCluster(clusterName); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+
+	resp, err := testutil.GetClient().Get("/open-api/v1/clusters/" + clusterName)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	testutil.AssertSuccess(t, resp)
+	testutil.AssertDataFieldEquals(t, resp, "name", clusterName)
 
 	t.Cleanup(func() {
 		testutil.DeleteCluster(clusterName)

@@ -20,6 +20,7 @@ import (
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/api_key"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/entity"
+	"github.com/rainway-ai-gateway/ai-gateway-api/model/ioperlog"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/itxn"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/iversion_control"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/shared"
@@ -34,6 +35,7 @@ type RateLimitPolicyManager struct {
 	apiKeyStorager        api_key.APIKeyStorager
 	entityStorager        entity.EntityStorager
 	versionControlManager *iversion_control.VersionControlManager
+	operationLogManager   ioperlog.OperationLogRecorder
 }
 
 // NewRateLimitPolicyManager 创建限流策略管理器
@@ -47,9 +49,21 @@ func NewRateLimitPolicyManager(txn itxn.TxnStorager, storager RateLimitPolicySto
 	}
 }
 
+// SetOperationLogManager injects the operation log recorder.
+func (m *RateLimitPolicyManager) SetOperationLogManager(manager ioperlog.OperationLogRecorder) {
+	m.operationLogManager = manager
+}
+
 // CreateRateLimitPolicy 创建限流策略
 func (m *RateLimitPolicyManager) CreateRateLimitPolicy(ctx context.Context, param *RateLimitPolicyParam) (int64, error) {
-	return m.storager.CreateRateLimitPolicy(ctx, param)
+	id, err := m.storager.CreateRateLimitPolicy(ctx, param)
+	if err != nil {
+		m.recordRateLimitPolicyOperation(ctx, string(ioperlog.ActionCreate), "", "", nil, rateLimitPolicyParamToMap(param), err)
+		return 0, err
+	}
+
+	m.recordRateLimitPolicyOperation(ctx, string(ioperlog.ActionCreate), rateLimitPolicyIDString(id), "", nil, rateLimitPolicyParamToMap(param), nil)
+	return id, nil
 }
 
 // FetchRateLimitPolicy 查询单个限流策略
@@ -64,12 +78,47 @@ func (m *RateLimitPolicyManager) FetchRateLimitPolicyList(ctx context.Context, f
 
 // UpdateRateLimitPolicy 更新限流策略
 func (m *RateLimitPolicyManager) UpdateRateLimitPolicy(ctx context.Context, filter *RateLimitPolicyFilter, param *RateLimitPolicyParam) (int64, error) {
-	return m.storager.UpdateRateLimitPolicy(ctx, filter, param)
+	resourceID := ""
+	if filter != nil && filter.ID != nil {
+		resourceID = rateLimitPolicyIDString(*filter.ID)
+	}
+
+	oldPolicy, err := m.storager.FetchRateLimitPolicy(ctx, filter)
+	if err != nil {
+		m.recordRateLimitPolicyOperation(ctx, string(ioperlog.ActionUpdate), resourceID, "", nil, rateLimitPolicyParamToMap(param), err)
+		return 0, err
+	}
+
+	affected, err := m.storager.UpdateRateLimitPolicy(ctx, filter, param)
+	if err != nil {
+		m.recordRateLimitPolicyOperation(ctx, string(ioperlog.ActionUpdate), resourceID, "", rateLimitPolicyParamToMap(oldPolicy), rateLimitPolicyParamToMap(param), err)
+		return affected, err
+	}
+
+	m.recordRateLimitPolicyOperation(ctx, string(ioperlog.ActionUpdate), resourceID, "", rateLimitPolicyParamToMap(oldPolicy), rateLimitPolicyParamToMap(param), nil)
+	return affected, nil
 }
 
 // DeleteRateLimitPolicy 删除限流策略
 func (m *RateLimitPolicyManager) DeleteRateLimitPolicy(ctx context.Context, filter *RateLimitPolicyFilter) error {
-	return m.storager.DeleteRateLimitPolicy(ctx, filter)
+	resourceID := ""
+	if filter != nil && filter.ID != nil {
+		resourceID = rateLimitPolicyIDString(*filter.ID)
+	}
+
+	oldPolicy, err := m.storager.FetchRateLimitPolicy(ctx, filter)
+	if err != nil {
+		m.recordRateLimitPolicyOperation(ctx, string(ioperlog.ActionDelete), resourceID, "", nil, nil, err)
+		return err
+	}
+
+	if err := m.storager.DeleteRateLimitPolicy(ctx, filter); err != nil {
+		m.recordRateLimitPolicyOperation(ctx, string(ioperlog.ActionDelete), resourceID, "", rateLimitPolicyParamToMap(oldPolicy), nil, err)
+		return err
+	}
+
+	m.recordRateLimitPolicyOperation(ctx, string(ioperlog.ActionDelete), resourceID, "", rateLimitPolicyParamToMap(oldPolicy), nil, nil)
+	return nil
 }
 
 // ConfigExport 导出限流策略配置供 BFE 使用

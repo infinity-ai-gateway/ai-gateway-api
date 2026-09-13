@@ -289,17 +289,52 @@ models:
 	assert.Equal(t, 0.000009, m.TierPrices["peak"]["output_cost_per_token"])
 	assert.Equal(t, 0.0000001, m.TierPrices["peak"]["cache_read_input_token_cost"])
 
-	// JSON should use decimal notation, not scientific notation.
+	// JSON round-trip preserves values regardless of textual notation
+	// (the standard encoder may emit scientific notation for small values).
 	data, err := json.Marshal(m)
 	require.NoError(t, err)
-	assert.Contains(t, string(data), "0.00000005")
-	assert.Contains(t, string(data), "0.0000001")
-	assert.NotContains(t, string(data), "5e-")
-	assert.NotContains(t, string(data), "1e-")
-
-	// Round-trip preserves values.
 	var back ModelPrice
 	require.NoError(t, json.Unmarshal(data, &back))
+	assert.Equal(t, 0.0000015, back.Prices["input_cost_per_token"])
+	assert.Equal(t, 0.0000045, back.Prices["output_cost_per_token"])
 	assert.Equal(t, 0.00000005, back.Prices["cache_read_input_token_cost"])
+	assert.Equal(t, 0.000003, back.TierPrices["peak"]["input_cost_per_token"])
+	assert.Equal(t, 0.000009, back.TierPrices["peak"]["output_cost_per_token"])
 	assert.Equal(t, 0.0000001, back.TierPrices["peak"]["cache_read_input_token_cost"])
+}
+
+func TestParseModelListYAMLScientificNotation(t *testing.T) {
+	yaml := `
+version: v1.0
+default_currency: RMB
+models:
+  - provider: example-provider
+    model: qwen2.5-omni-7b
+    base_model: qwen2.5-omni-7b
+    mode: chat
+    prices:
+      input_cost_per_token: 6.0168984e-09
+      output_cost_per_token: 7.6234102728e-08
+    tier_prices:
+      peak:
+        input_cost_per_token: 4.141631732e-06
+`
+	file, err := ParseModelListYAML(strings.NewReader(yaml))
+	require.NoError(t, err)
+	require.Len(t, file.Models, 1)
+
+	m := file.Models[0]
+	assert.Equal(t, 6.0168984e-09, m.Prices["input_cost_per_token"])
+	assert.Equal(t, 7.6234102728e-08, m.Prices["output_cost_per_token"])
+	assert.Equal(t, 4.141631732e-06, m.TierPrices["peak"]["input_cost_per_token"])
+
+	// Scientific notation and decimal notation are equivalent: JSON
+	// round-trip must preserve the float64 values.
+	data, err := json.Marshal(m)
+	require.NoError(t, err)
+	var back ModelPrice
+	require.NoError(t, json.Unmarshal(data, &back))
+	assert.Equal(t, 6.0168984e-09, back.Prices["input_cost_per_token"])
+	assert.Equal(t, 7.6234102728e-08, back.Prices["output_cost_per_token"])
+	assert.Equal(t, 4.141631732e-06, back.TierPrices["peak"]["input_cost_per_token"])
 }

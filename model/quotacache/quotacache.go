@@ -39,6 +39,12 @@ type QuotaCache interface {
 	// Semantically it is equivalent to SetRemaining.
 	ResetToQuota(ctx context.Context, key string, quota *float64, unit *string) error
 
+	// ResetToQuotaAtomic atomically sets the Redis remaining quota to the given
+	// amount using Redis SET. Unlike SetRemaining, it does not read the current
+	// value and avoids the read-modify-write race of IncrBy(delta). It is
+	// intended for periodic quota reset only.
+	ResetToQuotaAtomic(ctx context.Context, key string, quota *float64, unit *string) error
+
 	// DeleteKeys removes the given Redis keys.
 	// The caller must pass the complete Redis keys (including any prefix);
 	// the implementation deletes them as-is.

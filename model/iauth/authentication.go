@@ -23,6 +23,7 @@ import (
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib"
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xerror"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/ibasic"
+	"github.com/rainway-ai-gateway/ai-gateway-api/model/ioperlog"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/itxn"
 	"github.com/rainway-ai-gateway/ai-gateway-api/stateful"
 )
@@ -210,9 +211,10 @@ type AuthenticateStorager interface {
 }
 
 type AuthenticateManager struct {
-	txn               itxn.TxnStorager
-	storager          AuthenticateStorager // the storager for authentication
-	authorizeStorager AuthorizeStorager    // the storager for authorization
+	txn                 itxn.TxnStorager
+	storager            AuthenticateStorager // the storager for authentication
+	authorizeStorager   AuthorizeStorager    // the storager for authorization
+	operationLogManager ioperlog.OperationLogRecorder
 }
 
 func NewAuthenticateManager(txn itxn.TxnStorager, storager AuthenticateStorager,
@@ -222,6 +224,11 @@ func NewAuthenticateManager(txn itxn.TxnStorager, storager AuthenticateStorager,
 		storager:          storager,
 		authorizeStorager: authorizeStorage,
 	}
+}
+
+// SetOperationLogManager injects the operation log recorder.
+func (m *AuthenticateManager) SetOperationLogManager(manager ioperlog.OperationLogRecorder) {
+	m.operationLogManager = manager
 }
 
 func sessionKeyFactory(len int) (string, error) {
@@ -346,7 +353,13 @@ func (m *AuthenticateManager) Authenticate(ctx context.Context, param *Authentic
 }
 
 func (m *AuthenticateManager) DestroySessionKey(ctx context.Context, sessionKey string) (err error) {
-	return m.txn.AtomExecute(ctx, func(ctx context.Context) error {
+	var oldUser *User
+	updateParam := &UserParam{
+		SessionKey:         lib.PString(""),
+		SessionKeyCreateAt: lib.PTime(time.Time{}.AddDate(0, 1, 1)),
+	}
+
+	err = m.txn.AtomExecute(ctx, func(ctx context.Context) error {
 		user, err := m.storager.FetchUser(ctx, &UserFilter{
 			SessionKey: &sessionKey,
 		})
@@ -357,12 +370,23 @@ func (m *AuthenticateManager) DestroySessionKey(ctx context.Context, sessionKey 
 		if user == nil {
 			return xerror.WrapAuthenticateFailErrorWithMsg("Session Key Not Exist")
 		}
+		oldUser = user
 
-		return m.storager.UpdateUser(ctx, user, &UserParam{
-			SessionKey:         lib.PString(""),
-			SessionKeyCreateAt: lib.PTime(time.Time{}.AddDate(0, 1, 1)),
-		})
+		return m.storager.UpdateUser(ctx, user, updateParam)
 	})
+	if err != nil {
+		userID := int64(0)
+		name := ""
+		if oldUser != nil {
+			userID = oldUser.ID
+			name = oldUser.Name
+		}
+		m.recordUserOperation(ctx, string(ioperlog.ActionReset), userID, name, "", userToMap(oldUser), userParamToMap(updateParam), err)
+		return err
+	}
+
+	m.recordUserOperation(ctx, string(ioperlog.ActionReset), oldUser.ID, oldUser.Name, "", userToMap(oldUser), userParamToMap(updateParam), nil)
+	return nil
 }
 
 type TokenFilter struct {
@@ -407,8 +431,13 @@ func (m *AuthenticateManager) DeleteToken(ctx context.Context, token *Token) (er
 
 		return m.authorizeStorager.UnbindTokenAllProduct(ctx, token)
 	})
+	if err != nil {
+		m.recordTokenOperation(ctx, string(ioperlog.ActionDelete), token.ID, token.Name, "", tokenToMap(token), nil, err)
+		return err
+	}
 
-	return err
+	m.recordTokenOperation(ctx, string(ioperlog.ActionDelete), token.ID, token.Name, "", tokenToMap(token), nil, nil)
+	return nil
 }
 
 func (m *AuthenticateManager) CreateToken(ctx context.Context, param *TokenParam, product *ibasic.Product) (token *Token, err error) {
@@ -470,8 +499,27 @@ func (m *AuthenticateManager) CreateToken(ctx context.Context, param *TokenParam
 
 		return err
 	})
+	if err != nil {
+		tokenName := ""
+		if token != nil {
+			tokenName = token.Name
+		} else if param != nil && param.Name != nil {
+			tokenName = *param.Name
+		}
+		parentID := ""
+		if product != nil {
+			parentID = product.Name
+		}
+		m.recordTokenOperation(ctx, string(ioperlog.ActionCreate), 0, tokenName, parentID, nil, tokenParamToMap(param), err)
+		return nil, err
+	}
 
-	return
+	parentID := ""
+	if product != nil {
+		parentID = product.Name
+	}
+	m.recordTokenOperation(ctx, string(ioperlog.ActionCreate), token.ID, token.Name, parentID, nil, tokenToMap(token), nil)
+	return token, nil
 }
 
 func (m *AuthenticateManager) CreateUser(ctx context.Context, param *UserParam) (err error) {
@@ -481,7 +529,7 @@ func (m *AuthenticateManager) CreateUser(ctx context.Context, param *UserParam) 
 		}
 	}
 
-	return m.txn.AtomExecute(ctx, func(ctx context.Context) error {
+	if err = m.txn.AtomExecute(ctx, func(ctx context.Context) error {
 		user, err := m.storager.FetchUser(ctx, &UserFilter{
 			Name: param.Name,
 		})
@@ -494,11 +542,18 @@ func (m *AuthenticateManager) CreateUser(ctx context.Context, param *UserParam) 
 		}
 
 		return m.storager.CreateUser(ctx, param)
-	})
+	}); err != nil {
+		m.recordUserOperation(ctx, string(ioperlog.ActionCreate), 0, userParamName(param), "", nil, userParamToMap(param), err)
+		return err
+	}
+
+	m.recordUserOperation(ctx, string(ioperlog.ActionCreate), 0, userParamName(param), "", nil, userParamToMap(param), nil)
+	return nil
 }
 
 func (m *AuthenticateManager) DeleteUser(ctx context.Context, userName string) (err error) {
-	return m.txn.AtomExecute(ctx, func(ctx context.Context) error {
+	var oldUser *User
+	err = m.txn.AtomExecute(ctx, func(ctx context.Context) error {
 		user, err := m.storager.FetchUser(ctx, &UserFilter{
 			Name: &userName,
 		})
@@ -509,6 +564,7 @@ func (m *AuthenticateManager) DeleteUser(ctx context.Context, userName string) (
 		if user == nil {
 			return xerror.WrapRecordNotExist("User")
 		}
+		oldUser = user
 
 		if err = m.storager.DeleteUser(ctx, user); err != nil {
 			return err
@@ -516,6 +572,19 @@ func (m *AuthenticateManager) DeleteUser(ctx context.Context, userName string) (
 
 		return m.authorizeStorager.UnbindUserAllProduct(ctx, user)
 	})
+	if err != nil {
+		userID := int64(0)
+		name := userName
+		if oldUser != nil {
+			userID = oldUser.ID
+			name = oldUser.Name
+		}
+		m.recordUserOperation(ctx, string(ioperlog.ActionDelete), userID, name, "", userToMap(oldUser), nil, err)
+		return err
+	}
+
+	m.recordUserOperation(ctx, string(ioperlog.ActionDelete), oldUser.ID, oldUser.Name, "", userToMap(oldUser), nil, nil)
+	return nil
 }
 
 func passwordCheck(password string) error {
@@ -537,7 +606,7 @@ func (m *AuthenticateManager) UpdateUserPassword(ctx context.Context, pcd *Passw
 		return err
 	}
 
-	return m.updateUser(ctx, &UserFilter{
+	oldUser, err := m.updateUser(ctx, &UserFilter{
 		Name: &pcd.UserName,
 	}, func(user *User) error {
 		if pcd.OldPassword != "" {
@@ -551,12 +620,33 @@ func (m *AuthenticateManager) UpdateUserPassword(ctx context.Context, pcd *Passw
 		SessionKey:         lib.PString(""),
 		SessionKeyCreateAt: lib.PTime(time.Time{}.AddDate(0, 1, 1)),
 	})
+	if err != nil {
+		userID := int64(0)
+		name := pcd.UserName
+		if oldUser != nil {
+			userID = oldUser.ID
+			name = oldUser.Name
+		}
+		m.recordUserOperation(ctx, string(ioperlog.ActionUpdate), userID, name, "", userToMap(oldUser), userParamToMap(&UserParam{
+			Password:           &pcd.Password,
+			SessionKey:         lib.PString(""),
+			SessionKeyCreateAt: lib.PTime(time.Time{}.AddDate(0, 1, 1)),
+		}), err)
+		return err
+	}
+
+	m.recordUserOperation(ctx, string(ioperlog.ActionUpdate), oldUser.ID, oldUser.Name, "", userToMap(oldUser), userParamToMap(&UserParam{
+		Password:           &pcd.Password,
+		SessionKey:         lib.PString(""),
+		SessionKeyCreateAt: lib.PTime(time.Time{}.AddDate(0, 1, 1)),
+	}), nil)
+	return nil
 }
 
 func (m *AuthenticateManager) updateUser(ctx context.Context, filter *UserFilter,
-	userChecker func(*User) error, newData *UserParam) (err error) {
+	userChecker func(*User) error, newData *UserParam) (oldUser *User, err error) {
 
-	return m.txn.AtomExecute(ctx, func(ctx context.Context) error {
+	err = m.txn.AtomExecute(ctx, func(ctx context.Context) error {
 		user, err := m.storager.FetchUser(ctx, filter)
 		if err != nil {
 			return err
@@ -565,6 +655,7 @@ func (m *AuthenticateManager) updateUser(ctx context.Context, filter *UserFilter
 		if user == nil {
 			return xerror.WrapRecordNotExist("User")
 		}
+		oldUser = user
 
 		if userChecker != nil {
 			if err = userChecker(user); err != nil {
@@ -574,6 +665,7 @@ func (m *AuthenticateManager) updateUser(ctx context.Context, filter *UserFilter
 
 		return m.storager.UpdateUser(ctx, user, newData)
 	})
+	return oldUser, err
 }
 
 func (m *AuthenticateManager) FetchUser(ctx context.Context, filter *UserFilter) (user *User, err error) {

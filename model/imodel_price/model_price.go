@@ -15,109 +15,38 @@
 package imodel_price
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"strconv"
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xerror"
+	"github.com/rainway-ai-gateway/ai-gateway-api/model/ioperlog"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/itxn"
 )
 
-// PriceMap is a map of price keys to their numeric values.
-// It marshals to JSON using decimal notation instead of scientific notation.
+// PriceMap is a map of price keys to their numeric values (yuan per unit).
+// Prices may use more than 8 decimal places; both decimal and scientific
+// notation are accepted on input and may appear in JSON output.
 type PriceMap map[string]float64
 
-// MarshalJSON serializes PriceMap using decimal notation for all values.
-func (p PriceMap) MarshalJSON() ([]byte, error) {
-	if p == nil {
-		return []byte("null"), nil
-	}
-	var buf bytes.Buffer
-	buf.WriteByte('{')
-	first := true
-	for k, v := range p {
-		if !first {
-			buf.WriteByte(',')
-		}
-		first = false
-		keyBytes, err := json.Marshal(k)
-		if err != nil {
-			return nil, err
-		}
-		buf.Write(keyBytes)
-		buf.WriteByte(':')
-		buf.WriteString(strconv.FormatFloat(v, 'f', -1, 64))
-	}
-	buf.WriteByte('}')
-	return buf.Bytes(), nil
-}
-
 // TierPriceMap is a map of tier names to PriceMap values.
-// It marshals to JSON using decimal notation instead of scientific notation.
 type TierPriceMap map[string]map[string]float64
-
-// MarshalJSON serializes TierPriceMap using decimal notation for all nested values.
-func (t TierPriceMap) MarshalJSON() ([]byte, error) {
-	if t == nil {
-		return []byte("null"), nil
-	}
-	var buf bytes.Buffer
-	buf.WriteByte('{')
-	first := true
-	for tier, prices := range t {
-		if !first {
-			buf.WriteByte(',')
-		}
-		first = false
-		tierBytes, err := json.Marshal(tier)
-		if err != nil {
-			return nil, err
-		}
-		buf.Write(tierBytes)
-		buf.WriteByte(':')
-		if prices == nil {
-			buf.WriteString("null")
-			continue
-		}
-		innerFirst := true
-		buf.WriteByte('{')
-		for k, v := range prices {
-			if !innerFirst {
-				buf.WriteByte(',')
-			}
-			innerFirst = false
-			keyBytes, err := json.Marshal(k)
-			if err != nil {
-				return nil, err
-			}
-			buf.Write(keyBytes)
-			buf.WriteByte(':')
-			buf.WriteString(strconv.FormatFloat(v, 'f', -1, 64))
-		}
-		buf.WriteByte('}')
-	}
-	buf.WriteByte('}')
-	return buf.Bytes(), nil
-}
 
 // ModelPrice represents a single model pricing/capability record.
 type ModelPrice struct {
-	ID                  int64                       `json:"id" yaml:"id,omitempty"`
-	Provider            string                      `json:"provider" yaml:"provider"`
-	Model               string                      `json:"model" yaml:"model"`
-	BaseModel           string                      `json:"base_model" yaml:"base_model"`
-	Mode                string                      `json:"mode" yaml:"mode"`
-	Capabilities        []string                    `json:"capabilities,omitempty" yaml:"capabilities,omitempty"`
-	SupportedParameters []string                    `json:"supported_parameters,omitempty" yaml:"supported_parameters,omitempty"`
-	Limits              map[string]interface{}      `json:"limits,omitempty" yaml:"limits,omitempty"`
-	Prices              PriceMap                    `json:"prices,omitempty" yaml:"prices,omitempty"`
-	TierPrices          TierPriceMap                `json:"tier_prices,omitempty" yaml:"tier_prices,omitempty"`
-	PriceCurrency       string                      `json:"price_currency,omitempty" yaml:"price_currency,omitempty"`
-	Metadata            map[string]interface{}      `json:"metadata,omitempty" yaml:"metadata,omitempty"`
-	CreateTime          *int64                      `json:"create_time,omitempty" yaml:"create_time,omitempty"`
-	UpdateTime          *int64                      `json:"update_time,omitempty" yaml:"update_time,omitempty"`
+	ID                  int64                  `json:"id" yaml:"id,omitempty"`
+	Provider            string                 `json:"provider" yaml:"provider"`
+	Model               string                 `json:"model" yaml:"model"`
+	BaseModel           string                 `json:"base_model" yaml:"base_model"`
+	Mode                string                 `json:"mode" yaml:"mode"`
+	Capabilities        []string               `json:"capabilities,omitempty" yaml:"capabilities,omitempty"`
+	SupportedParameters []string               `json:"supported_parameters,omitempty" yaml:"supported_parameters,omitempty"`
+	Limits              map[string]interface{} `json:"limits,omitempty" yaml:"limits,omitempty"`
+	Prices              PriceMap               `json:"prices,omitempty" yaml:"prices,omitempty"`
+	TierPrices          TierPriceMap           `json:"tier_prices,omitempty" yaml:"tier_prices,omitempty"`
+	PriceCurrency       string                 `json:"price_currency,omitempty" yaml:"price_currency,omitempty"`
+	Metadata            map[string]interface{} `json:"metadata,omitempty" yaml:"metadata,omitempty"`
+	CreateTime          *int64                 `json:"create_time,omitempty" yaml:"create_time,omitempty"`
+	UpdateTime          *int64                 `json:"update_time,omitempty" yaml:"update_time,omitempty"`
 }
 
 // ModelPriceFilter is used to query model price records.
@@ -148,8 +77,9 @@ type ModelPriceStorager interface {
 
 // Manager provides business-level operations for model pricing records.
 type Manager struct {
-	txn      itxn.TxnStorager
-	storager ModelPriceStorager
+	txn                 itxn.TxnStorager
+	storager            ModelPriceStorager
+	operationLogManager ioperlog.OperationLogRecorder
 }
 
 // NewManager creates a new Manager instance.
@@ -160,20 +90,53 @@ func NewManager(txn itxn.TxnStorager, storager ModelPriceStorager) *Manager {
 	}
 }
 
+// SetOperationLogManager injects the operation log recorder.
+func (m *Manager) SetOperationLogManager(manager ioperlog.OperationLogRecorder) {
+	m.operationLogManager = manager
+}
+
 // CreateModelPrice creates a single model price record.
 func (m *Manager) CreateModelPrice(ctx context.Context, param *ModelPrice) (int64, error) {
 	if err := ValidateModelPrice(param); err != nil {
+		m.recordModelPriceOperation(ctx, string(ioperlog.ActionCreate), "", modelPriceName(param), nil, modelPriceToMap(param), err)
 		return 0, err
 	}
-	return m.storager.CreateModelPrice(ctx, param)
+	id, err := m.storager.CreateModelPrice(ctx, param)
+	if err != nil {
+		m.recordModelPriceOperation(ctx, string(ioperlog.ActionCreate), "", modelPriceName(param), nil, modelPriceToMap(param), err)
+		return 0, err
+	}
+
+	m.recordModelPriceOperation(ctx, string(ioperlog.ActionCreate), modelPriceIDString(id), modelPriceName(param), nil, modelPriceToMap(param), nil)
+	return id, nil
 }
 
 // UpdateModelPrice updates a model price record matched by filter.
 func (m *Manager) UpdateModelPrice(ctx context.Context, filter *ModelPriceFilter, param *ModelPrice) (int64, error) {
+	resourceID := ""
+	if filter != nil && filter.ID != nil {
+		resourceID = modelPriceIDString(*filter.ID)
+	}
+
 	if err := ValidateModelPrice(param); err != nil {
+		m.recordModelPriceOperation(ctx, string(ioperlog.ActionUpdate), resourceID, modelPriceName(param), nil, modelPriceToMap(param), err)
 		return 0, err
 	}
-	return m.storager.UpdateModelPrice(ctx, filter, param)
+
+	oldPrice, err := m.storager.FetchModelPrice(ctx, filter)
+	if err != nil {
+		m.recordModelPriceOperation(ctx, string(ioperlog.ActionUpdate), resourceID, modelPriceName(param), nil, modelPriceToMap(param), err)
+		return 0, err
+	}
+
+	affected, err := m.storager.UpdateModelPrice(ctx, filter, param)
+	if err != nil {
+		m.recordModelPriceOperation(ctx, string(ioperlog.ActionUpdate), resourceID, modelPriceName(param), modelPriceToMap(oldPrice), modelPriceToMap(param), err)
+		return affected, err
+	}
+
+	m.recordModelPriceOperation(ctx, string(ioperlog.ActionUpdate), resourceID, modelPriceName(param), modelPriceToMap(oldPrice), modelPriceToMap(param), nil)
+	return affected, nil
 }
 
 // ListProviders returns all distinct provider names in model_prices.
@@ -183,7 +146,24 @@ func (m *Manager) ListProviders(ctx context.Context) ([]string, error) {
 
 // DeleteModelPrice deletes model price records matched by filter.
 func (m *Manager) DeleteModelPrice(ctx context.Context, filter *ModelPriceFilter) error {
-	return m.storager.DeleteModelPrice(ctx, filter)
+	resourceID := ""
+	if filter != nil && filter.ID != nil {
+		resourceID = modelPriceIDString(*filter.ID)
+	}
+
+	oldPrice, err := m.storager.FetchModelPrice(ctx, filter)
+	if err != nil {
+		m.recordModelPriceOperation(ctx, string(ioperlog.ActionDelete), resourceID, "", nil, nil, err)
+		return err
+	}
+
+	if err := m.storager.DeleteModelPrice(ctx, filter); err != nil {
+		m.recordModelPriceOperation(ctx, string(ioperlog.ActionDelete), resourceID, modelPriceName(oldPrice), modelPriceToMap(oldPrice), nil, err)
+		return err
+	}
+
+	m.recordModelPriceOperation(ctx, string(ioperlog.ActionDelete), resourceID, modelPriceName(oldPrice), modelPriceToMap(oldPrice), nil, nil)
+	return nil
 }
 
 // FetchModelPrice fetches a single model price record matched by filter.
@@ -209,11 +189,14 @@ const (
 // mode = "merge":  update existing (provider, model, mode) records and insert new ones.
 func (m *Manager) ImportModelPrices(ctx context.Context, entries []*ModelPrice, mode string) (imported int, skipped int, err error) {
 	if mode != string(ImportModeReplace) && mode != string(ImportModeMerge) {
-		return 0, 0, xerror.WrapParamErrorWithMsg("import mode must be replace or merge")
+		err = xerror.WrapParamErrorWithMsg("import mode must be replace or merge")
+		m.recordModelPriceImport(ctx, mode, 0, entries, err)
+		return 0, 0, err
 	}
 
 	for _, entry := range entries {
 		if err := ValidateModelPrice(entry); err != nil {
+			m.recordModelPriceImport(ctx, mode, 0, entries, err)
 			return 0, 0, err
 		}
 	}
@@ -261,6 +244,11 @@ func (m *Manager) ImportModelPrices(ctx context.Context, entries []*ModelPrice, 
 		}
 		return nil
 	})
+	if err != nil {
+		m.recordModelPriceImport(ctx, mode, imported, entries, err)
+		return imported, skipped, err
+	}
 
-	return imported, skipped, err
+	m.recordModelPriceImport(ctx, mode, imported, entries, nil)
+	return imported, skipped, nil
 }

@@ -17,6 +17,7 @@ package certificate
 import (
 	"net/http"
 
+	"github.com/rainway-ai-gateway/ai-gateway-api/lib/validate"
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xreq"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/iauth"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/iprotocol"
@@ -79,6 +80,10 @@ var _ xreq.Handler = CreateAction
 func CreateAction(req *http.Request) (interface{}, error) {
 	param, err := newCreateParam4Create(req)
 	if err != nil {
+		return nil, err
+	}
+
+	if err := validate.CertName(*param.Name); err != nil {
 		return nil, err
 	}
 

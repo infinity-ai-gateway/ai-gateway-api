@@ -114,7 +114,8 @@ func quotaPlanFilterToParam(filter *quota.QuotaPlanFilter) *dao.TQuotaPlanParam 
 	}
 
 	return &dao.TQuotaPlanParam{
-		ID: filter.ID,
+		ID:                filter.ID,
+		LastResetAtBefore: filter.LastResetAtBefore,
 	}
 }
 

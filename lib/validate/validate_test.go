@@ -88,6 +88,27 @@ func TestClusterName(t *testing.T) {
 	assert.Error(t, ClusterName("cluster."))
 }
 
+func TestCertName(t *testing.T) {
+	assert.NoError(t, CertName("demo-cert"))
+	assert.NoError(t, CertName("tc009.qa-20260904"))
+	assert.NoError(t, CertName("my_cert_01"))
+	assert.NoError(t, CertName("ab"))
+	assert.NoError(t, CertName(strings.Repeat("a", 64)))
+
+	assert.Error(t, CertName(""))
+	assert.Error(t, CertName("a"))
+	assert.Error(t, CertName(strings.Repeat("a", 65)))
+	assert.Error(t, CertName("demo/child"))
+	assert.Error(t, CertName("demo?x=1"))
+	assert.Error(t, CertName("demo#1"))
+	assert.Error(t, CertName("demo cert"))
+	assert.Error(t, CertName("demo%2F"))
+	assert.Error(t, CertName("-demo"))
+	assert.Error(t, CertName("demo-"))
+	assert.Error(t, CertName("_demo"))
+	assert.Error(t, CertName("demo_"))
+}
+
 func TestEntityTypeName(t *testing.T) {
 	assert.NoError(t, EntityTypeName("dep_1"))
 	assert.Error(t, EntityTypeName("Dep"))
@@ -98,6 +119,8 @@ func TestEntityName(t *testing.T) {
 	assert.NoError(t, EntityName("dep"))
 	assert.NoError(t, EntityName("dep_01"))
 	assert.NoError(t, EntityName("ai-gateway"))
+	assert.NoError(t, EntityName("dep@1"))
+	assert.NoError(t, EntityName("zhanghuzhenyu@default"))
 	assert.NoError(t, EntityName(strings.Repeat("a", 64)))
 
 	assert.Error(t, EntityName(""))
@@ -105,7 +128,9 @@ func TestEntityName(t *testing.T) {
 	assert.Error(t, EntityName("Dep"))
 	assert.Error(t, EntityName("dep 1"))
 	assert.Error(t, EntityName("部门"))
-	assert.Error(t, EntityName("dep@1"))
+	assert.Error(t, EntityName("dep#1"))
+	assert.Error(t, EntityName("@dep"))
+	assert.Error(t, EntityName("dep@"))
 	assert.Error(t, EntityName("-dep"))
 	assert.Error(t, EntityName("_dep"))
 	assert.Error(t, EntityName("dep-"))

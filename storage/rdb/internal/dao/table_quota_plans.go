@@ -73,6 +73,7 @@ type TQuotaPlanParam struct {
 	Unit                  *string          `db:"unit"`
 	ResetPeriod           *string          `db:"reset_period"`
 	LastResetAt           *time.Time       `db:"last_reset_at"`
+	LastResetAtBefore     *time.Time       `db:"last_reset_at,<"`
 	CreatedAt             *time.Time       `db:"created_at"`
 	UpdatedAt             *time.Time       `db:"updated_at"`
 

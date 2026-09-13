@@ -239,7 +239,7 @@ func (rppm *PoolManager) CanDelete(ctx context.Context, pool *Pool) error {
 		return err
 	}
 	if len(bfeClusters) != 0 {
-		return xerror.WrapModelErrorWithMsg("BFECluster %s Refer To This Pool", bfeClusters[0].Name)
+		return xerror.WrapConflictErrorWithMsg("BFECluster %s Refer To This Pool", bfeClusters[0].Name)
 	}
 
 	subClusters, err := rppm.subClusterStorager.FetchSubClusterList(ctx, &SubClusterFilter{
@@ -249,7 +249,7 @@ func (rppm *PoolManager) CanDelete(ctx context.Context, pool *Pool) error {
 		return err
 	}
 	if len(subClusters) != 0 {
-		return xerror.WrapModelErrorWithMsg("SubCluster %s Refer To This Pool", subClusters[0].Name)
+		return xerror.WrapConflictErrorWithMsg("SubCluster %s Refer To This Pool", subClusters[0].Name)
 	}
 
 	return nil

@@ -4,6 +4,8 @@
 
 Entity 模块用于管理组织架构实体（部门、团队、项目、个人等），支持层级关系、模型黑白名单、配额计划、限流策略、路由规则。v0.3.0 列表接口明确为分页结构 `{list, pagination}`，详情/创建/更新返回不含 `balance`。配额计划 `unit` 支持 `total_token` 与 `RMB`，金额型配额使用 `DECIMAL(18,8)` 存储，余额从 Redis 实时读取，精度为 1e8。
 
+Entity ID 生成机制（issue #132）：未显式指定 `id` 时，系统从数据库序列表 `entity_id_seq` 原子分配序号，生成 `entity-{seq}` 形式的 ID。序号单调递增、分配即消耗，删除 Entity 后不回退，保证旧 ID 永不复用（避免 ABA 身份混淆）；显式传入 `id` 时保留唯一性查重，`uk_entity_id` 唯一索引作为最终一致性防线。
+
 ## 2. 接口列表
 
 | 编号 | 接口名称 | 方法 | 路径 | 说明 |
@@ -22,16 +24,16 @@ Entity 模块用于管理组织架构实体（部门、团队、项目、个人�
 
 | 接口 | 测试用例数 |
 |------|-----------|
-| 创建 Entity | 11 |
+| 创建 Entity | 24 |
 | 查询 Entity 列表 | 3 |
 | 查询单个 Entity | 2 |
 | 全量更新 Entity | 6 |
 | 部分更新 Entity | 4 |
-| 删除 Entity | 3 |
+| 删除 Entity | 4 |
 | 查询配额计划 | 2 |
 | 重置配额余额 | 3 |
 | 更新配额计划（余额差异化调整） | 6 |
-| **合计** | **38** |
+| **合计** | **52** |
 
 ## 4. 认证方式
 
@@ -82,6 +84,7 @@ entity/
 
 | 参数名 | 类型 | 必填 | 说明 | 合法性条件 |
 |--------|------|------|------|------------|
+| id | string | N | Entity 唯一标识；不传时系统自动生成 `entity-{seq}`（seq 从 `entity_id_seq` 序列表原子分配，单调不回退） | 全局唯一（`uk_entity_id` 约束），重复返回 422 |
 | name | string | Y | Entity 名称，全局唯一 | 长度 1-64；不能包含控制字符；不能有首尾空白；全局唯一 |
 | type | string | Y | Entity 类型，必须引用已定义的 Entity-Type | 必须为已存在的 EntityTypeName |
 | parent_id | string | N | 父 Entity ID，为空表示根节点 | 若非空，父 Entity 必须存在，且其父类型的 level 必须小于当前类型的 level |
@@ -95,7 +98,7 @@ entity/
 
 | 参数名 | 类型 | 说明 |
 |--------|------|------|
-| id | string | Entity 唯一标识 |
+| id | string | Entity 唯一标识，格式 `entity-{seq}`（未显式传入时由系统从 `entity_id_seq` 序列表原子分配） |
 | name | string | Entity 名称 |
 | type | string | Entity 类型 |
 | parent_id | string | 父 Entity ID |
@@ -121,6 +124,12 @@ entity/
 | E-1-008 | 创建层级 Entity（非法 parent level） | 异常参数 | 父 level 必须小于子 |
 | E-1-009 | type 格式非法（含大写） | 合法性条件 | 验证 ErrNum=422 |
 | E-1-010 | Entity name 包含首尾空白 | 合法性条件 | 验证 ErrNum=422 |
+| E-1-019 | Entity name 含 `@`（`用户名@项目名` 形式） | 合法性条件 | 验证 ErrNum=200（Issue #135 放开 `@`） |
+| E-1-020 | Entity name 以 `@` 开头 | 合法性条件 | 验证 ErrNum=422 |
+| E-1-021 | Entity name 以 `@` 结尾 | 合法性条件 | 验证 ErrNum=422 |
+| E-1-022 | Entity name 含 `@` 以外的特殊字符 | 合法性条件 | 验证 ErrNum=422 |
+| E-1-101 | 自动生成 ID 格式为 entity-N | 返回数据 | 未传 id 时返回 `entity-{正整数}` 格式 ID |
+| E-1-102 | 连续创建 Entity ID 单调递增 | 业务规则 | 串行创建 5 个，ID 序号严格递增 |
 
 ### 6.4 测试场景详细设计
 
@@ -525,6 +534,73 @@ entity/
 | quota_plan.unit | "RMB" | Equals |
 | quota_plan.quota | 5555.5555 | Equals |
 | quota_plan.balance | 不存在 | NotExists |
+
+#### 6.4.12 E-1-101：自动生成 ID 格式为 entity-N（返回数据）
+
+##### 设计思路
+
+验证未显式传入 `id` 时，系统从 `entity_id_seq` 序列表分配序号并返回 `entity-{seq}` 格式的 ID（issue #132）。
+
+##### 前提数据准备
+
+已创建 Entity-Type `department`。
+
+##### 执行步骤
+
+1. 发送 POST 请求到 `/open-api/v1/entities`，Body 中只含 `name`、`type`。
+2. 验证返回 `id` 以 `entity-` 为前缀，后缀为正整数。
+
+##### 请求参数
+
+```json
+{
+    "name": "ent_auto_id",
+    "type": "department"
+}
+```
+
+##### 预期返回结果
+
+**ErrNum**：200  
+**ErrMsg**：success
+
+**Data 字段校验**：
+
+| 字段 | 预期值 | 校验方式 |
+|------|--------|---------|
+| id | 以 "entity-" 前缀、后缀为正整数 | Matches/GreaterThan(0) |
+
+> 说明：并发分配的正确性由 DAO 层单元测试 `TestTEntityIDSeqAllocate_Concurrent`（50 goroutine）覆盖；集成测试环境为 SQLite 文件库，多连接并发写会触发 busy 等待，故此处不启用并发 HTTP 用例。
+
+#### 6.4.13 E-1-102：连续创建 Entity ID 单调递增（业务规则）
+
+##### 设计思路
+
+验证序列表分配的 ID 严格单调递增，不会因删除或其他用例执行而复用旧序号。
+
+##### 前提数据准备
+
+已创建 Entity-Type `department`。
+
+##### 执行步骤
+
+1. 串行创建 5 个 Entity（每次仅传 `name`、`type`）。
+2. 记录每次返回的 `id`，解析序号并断言严格递增。
+
+##### 请求参数
+
+```json
+{
+    "name": "ent_seq_<i>",
+    "type": "department"
+}
+```
+
+##### 预期返回结果
+
+**ErrNum**：200（5 次均成功）
+
+**断言**：5 个 ID 序号 `seq_i` 满足 `seq_1 < seq_2 < ... < seq_5`（GreaterThan 逐次比较）。
 
 ---
 
@@ -1168,6 +1244,10 @@ URI：`non_existent_id`
 | E-5-001 | 部分更新 allow_models | 正常参数 | allow_models 更新 |
 | E-5-002 | 部分更新后查询一致性 | 返回数据 | PATCH 后立即 GET，验证数据一致 |
 | E-5-003 | 部分更新非法 route_rules（规则名重复） | 合法性条件 | 验证 ErrNum=422 |
+| E-5-004 | 部分更新 quota_plan 切换为 RMB | 正常参数 | unit 切换后余额同步重置 |
+| E-5-005 | 部分更新非法 name（含空格 / 下划线开头） | 合法性条件 | 验证 ErrNum=422 |
+| E-5-006 | 部分更新省略 allow_models/block_models 保持原值 | 契约钉死 | PATCH 省略 allow_models 时保持原值、block_models 正常更新（issue #152 回归） |
+| E-5-007 | 部分更新仅改 name 时模型列表保持 | 契约钉死 | PATCH 仅改 name 时 allow_models 保持原值（issue #152 回归） |
 
 ### 10.4 测试场景详细设计
 
@@ -1338,6 +1418,61 @@ URI：`non_existent_id`
 
 ---
 
+#### 10.4.6 E-5-006：部分更新省略 allow_models/block_models 保持原值（契约钉死）
+
+##### 设计思路
+
+钉死 PATCH"仅传需修改字段"契约对 `allow_models`/`block_models` 的适用（entities.md §2.5，issue #152）：PATCH 省略 `allow_models` 时必须保留原值，不得被静默重置为 `[]`。Entity 处于配额与权限继承树的节点位置，两字段被清空会改变该节点及其子树的有效模型集（数据丢失 + 权限语义静默变更）。
+
+##### 前提数据准备
+
+已创建 Entity，显式指定 `allow_models=["model-a"]`、`block_models=["model-b"]`。
+
+##### 执行步骤
+
+1. POST 创建携带模型列表的 Entity。
+2. PATCH 仅修改 `block_models=["model-c"]`，省略 `allow_models`。
+3. GET 查询，验证 `block_models` 已更新为 `["model-c"]`，`allow_models` 保持原值 `["model-a"]`。
+
+##### 预期返回结果
+
+**ErrNum**：200  
+**Data 字段校验**：
+
+| 字段 | 预期值 | 校验方式 |
+|------|--------|---------|
+| allow_models | ["model-a"] | Equals |
+| block_models | ["model-c"] | Equals |
+
+---
+
+#### 10.4.7 E-5-007：部分更新仅改 name 时模型列表保持（契约钉死）
+
+##### 设计思路
+
+补充验证最常见局部更新场景（仅改名）：省略 `allow_models` 时保持原值，防止修复遗漏其他 PATCH 路径。
+
+##### 前提数据准备
+
+已创建 Entity，显式指定 `allow_models=["model-a","model-b"]`。
+
+##### 执行步骤
+
+1. PATCH 仅修改 `name` 为新的合法名称，省略 `allow_models`。
+2. GET 查询，验证 `name` 已更新，`allow_models` 保持原值。
+
+##### 预期返回结果
+
+**ErrNum**：200  
+**Data 字段校验**：
+
+| 字段 | 预期值 | 校验方式 |
+|------|--------|---------|
+| name | <新名称> | Equals |
+| allow_models | ["model-a", "model-b"] | Equals |
+
+---
+
 ## 11. 删除 Entity
 
 ### 11.1 接口信息
@@ -1371,6 +1506,7 @@ Data 为 null。
 | E-6-001 | 删除 Entity | 正常参数 | 删除成功，再次查询返回 404 |
 | E-6-002 | 删除存在子节点的 Entity | 业务规则 | 验证 ErrNum=409 |
 | E-6-003 | 删除被 API-Key 挂载的 Entity | 业务规则 | 验证 ErrNum=409 |
+| E-6-004 | 删除最大编号 Entity 后新建不复用 ID | 业务规则 | 删除后重建的 ID 序号大于被删 ID |
 
 ### 11.4 测试场景详细设计
 
@@ -1458,6 +1594,39 @@ URI：Entity id
 **ErrNum**：409  
 **ErrMsg**：Entity 被挂载无法删除的错误信息  
 **Data**：null
+
+#### 11.4.4 E-6-004：删除最大编号 Entity 后新建不复用 ID（业务规则）
+
+##### 设计思路
+
+验证 Entity ID 序号分配单调不回退：删除当前最大编号的 Entity 后，新建 Entity 的 ID 序号必须大于被删 ID，不会复用（issue #132 的 ABA 场景）。
+
+##### 前提数据准备
+
+已创建 Entity-Type `department`；创建一个 Entity 并记录其自动分配的 `id`。
+
+##### 执行步骤
+
+1. 发送 DELETE 请求删除该 Entity，验证删除成功。
+2. 再次创建 Entity（仅传 `name`、`type`），记录新 `id`。
+3. 断言新 ID 不等于被删 ID，且其序号大于被删 ID 序号。
+
+##### 请求参数
+
+第一步 URI：被删 Entity id  
+第三步 Body：
+
+```json
+{
+    "name": "ent_recreated",
+    "type": "department"
+}
+```
+
+##### 预期返回结果
+
+第一步：**ErrNum**：200，Data 为 null。  
+第三步：**ErrNum**：200，返回 `id` 满足 `seq(new_id) > seq(deleted_id)` 且 `new_id != deleted_id`。
 
 ---
 
@@ -1771,10 +1940,14 @@ URI：`id`
 | E-9-004 | unlimited false -> true 重置为 sentinel | 正常参数 | `used=0`，`remaining=100000000` |
 | E-9-005 | unlimited true -> false 按新 quota 初始化 | 正常参数 | `used=0`，`remaining=新 quota` |
 | E-9-006 | 普通属性修改不影响配额余额 | 正常参数 | 修改 `allow_models` 等，余额不变 |
+| E-9-007 | 仅修改 quota（单位不变）时保留非零 used | 正常参数 | 预置 Redis 剩余 400（used=600），修改 quota 为 800 后 `used=600`、`remaining=200` |
+| E-9-008 | RMB 配额仅修改 quota 时保留非零 used | 正常参数 | 预置 Redis 剩余 400.0000（used=600.1234），修改 quota 为 800 后 `used=600.1234`、`remaining=199.8766` |
+| E-9-009 | 配额总量修改为 0 后剩余额度清零（回归 issue #136） | 正常参数 | 预置 Redis 剩余 400（used=600），修改 quota 为 0 后 `remaining=0`，且 Redis 余额同步为 0 |
+| E-9-010 | RMB 配额总量修改为 0 后剩余额度清零 | 正常参数 | 预置 Redis 剩余 400.0000（used=600.1234），修改 quota 为 0 后 `remaining=0`，且 Redis 余额同步为 0 |
 
 ### 14.3 测试场景详细设计
 
-> 说明：本组集成测试使用内存 Mock Redis（`Bns = "mock"`），测试进程无法直接写入 Redis。因此“保留 used”的非零 used 路径由 `model/quota`、`model/entity` 单元测试覆盖；集成测试仅验证无使用量时的接口行为。
+> 说明：本组集成测试使用嵌入式 Redis（miniredis），测试进程可通过 `ServerManager.SetQuotaRemaining` / `GetQuotaRemaining` 直接读写 Redis，因此非零 used 路径（AK-9-007/008）与 quota 清零路径（AK-9-009/010）均在集成测试中覆盖。
 
 #### 14.3.1 E-9-001：仅修改 quota（total_token）保留 used
 
@@ -2028,6 +2201,171 @@ URI：`id`
 
 ---
 
+
+#### 14.3.7 E-9-007：仅修改 quota（total_token）保留非零 used
+
+##### 设计思路
+
+验证“仅修改 quota、单位不变”时保留已使用量：预置 Redis 剩余 400（即 used=600），将 quota 从 1000 修改为 800 后，`used` 保持 600，`remaining` 调整为 200。
+
+##### 前提数据准备
+
+已创建有限配额 Entity（total_token / RMB），并通过 `ServerManager.SetQuotaRemaining` 预置 Redis 余额。
+
+##### 执行步骤
+
+1. 发送 PATCH 请求修改 `quota_plan.quota`。
+2. 查询 quota-plan 接口并校验 `balance`。
+3. 通过 `ServerManager.GetQuotaRemaining` 校验 Redis 余额。
+
+##### 请求参数
+
+```json
+{
+    "quota_plan": {
+        "unlimited": false,
+        "quota": 800,
+        "unit": "total_token"
+    }
+}
+```
+
+##### 预期返回结果
+
+**ErrNum**：200  
+**ErrMsg**：success
+
+**Data 字段校验**：
+
+| 字段 | 预期值 | 校验方式 |
+|------|--------|---------|
+| balance.used | 600 | Equals |
+| balance.remaining | 200 | Equals |
+| Redis 余额（`GetQuotaRemaining`） | 200 | Equals |
+
+#### 14.3.8 E-9-008：RMB 配额仅修改 quota 保留非零 used
+
+##### 设计思路
+
+验证 RMB 配额“仅修改 quota、单位不变”时保留已使用量（精度 1e-8 元）：预置 Redis 剩余 400.0000（used=600.1234），将 quota 从 1000.1234 修改为 800.0000 后，`used` 保持 600.1234，`remaining` 调整为 199.8766。
+
+##### 前提数据准备
+
+已创建有限配额 Entity（total_token / RMB），并通过 `ServerManager.SetQuotaRemaining` 预置 Redis 余额。
+
+##### 执行步骤
+
+1. 发送 PATCH 请求修改 `quota_plan.quota`。
+2. 查询 quota-plan 接口并校验 `balance`。
+3. 通过 `ServerManager.GetQuotaRemaining` 校验 Redis 余额。
+
+##### 请求参数
+
+```json
+{
+    "quota_plan": {
+        "unlimited": false,
+        "quota": 800.0000,
+        "unit": "RMB"
+    }
+}
+```
+
+##### 预期返回结果
+
+**ErrNum**：200  
+**ErrMsg**：success
+
+**Data 字段校验**：
+
+| 字段 | 预期值 | 校验方式 |
+|------|--------|---------|
+| balance.used | 600.1234 | Equals |
+| balance.remaining | 199.8766 | Equals |
+| Redis 余额（`GetQuotaRemaining`） | 199.8766 | Equals |
+
+#### 14.3.9 E-9-009：配额总量修改为 0 后剩余额度清零（回归 issue #136）
+
+##### 设计思路
+
+回归 [ai-gateway-api#136](https://github.com/rainway-ai-gateway/ai-gateway-api/issues/136)：预置 Redis 剩余 400（used=600），将 total_token 配额总量修改为 0 后，`remaining` 清零（`max(0, 0 - 600)`），且 Redis 余额被同步为 0，BFE 将立即以 QuotaExhausted 拒绝请求。
+
+##### 前提数据准备
+
+已创建有限配额 Entity（total_token / RMB），并通过 `ServerManager.SetQuotaRemaining` 预置 Redis 余额。
+
+##### 执行步骤
+
+1. 发送 PATCH 请求修改 `quota_plan.quota`。
+2. 查询 quota-plan 接口并校验 `balance`。
+3. 通过 `ServerManager.GetQuotaRemaining` 校验 Redis 余额。
+
+##### 请求参数
+
+```json
+{
+    "quota_plan": {
+        "unlimited": false,
+        "quota": 0,
+        "unit": "total_token"
+    }
+}
+```
+
+##### 预期返回结果
+
+**ErrNum**：200  
+**ErrMsg**：success
+
+**Data 字段校验**：
+
+| 字段 | 预期值 | 校验方式 |
+|------|--------|---------|
+| balance.used | 0 | Equals |
+| balance.remaining | 0 | Equals |
+| Redis 余额（`GetQuotaRemaining`） | 0 | Equals |
+
+#### 14.3.10 E-9-010：RMB 配额总量修改为 0 后剩余额度清零
+
+##### 设计思路
+
+RMB 配额的 quota 清零场景：预置 Redis 剩余 400.0000（used=600.1234），将 quota 从 1000.1234 修改为 0 后，`remaining` 清零，且 Redis 余额被同步为 0。
+
+##### 前提数据准备
+
+已创建有限配额 Entity（total_token / RMB），并通过 `ServerManager.SetQuotaRemaining` 预置 Redis 余额。
+
+##### 执行步骤
+
+1. 发送 PATCH 请求修改 `quota_plan.quota`。
+2. 查询 quota-plan 接口并校验 `balance`。
+3. 通过 `ServerManager.GetQuotaRemaining` 校验 Redis 余额。
+
+##### 请求参数
+
+```json
+{
+    "quota_plan": {
+        "unlimited": false,
+        "quota": 0,
+        "unit": "RMB"
+    }
+}
+```
+
+##### 预期返回结果
+
+**ErrNum**：200  
+**ErrMsg**：success
+
+**Data 字段校验**：
+
+| 字段 | 预期值 | 校验方式 |
+|------|--------|---------|
+| balance.used | 0 | Equals |
+| balance.remaining | 0 | Equals |
+| Redis 余额（`GetQuotaRemaining`） | 0 | Equals |
+
 ## 15. 依赖与数据准备
 
 1. 必须预先创建至少两种不同 `level` 的 Entity-Type 以验证层级约束。
@@ -2040,3 +2378,6 @@ URI：`id`
 2. `name` 全局唯一，测试用例间注意清理。
 3. 层级修改必须保证父节点 Entity-Type 的 `level` 小于当前节点。
 4. 测试环境 `SkipTokenValidate=true`，无需认证头。
+5. 自动生成的 Entity ID 为 `entity-{seq}`，序号来自 `entity_id_seq` 序列表且永不复用；用例间不能假设 ID 从 1 开始或连续，断言时应以相对大小（递增）而非绝对值为准。
+6. 集成测试启动的是项目根目录预编译的 `ai-gateway-api.exe`，修改被测代码后必须先重新编译（`go build -o ai-gateway-api.exe .`），否则测试运行的是旧二进制。
+7. 不要在集成测试中做多并发写请求：SQLite 文件库在多连接并发写下会触发 busy 等待直至请求超时（旧实现同样存在该限制），并发正确性由 DAO 层单元测试覆盖。

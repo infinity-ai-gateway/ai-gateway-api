@@ -24,7 +24,7 @@ import (
 
 func TestEndpoints(t *testing.T) {
 	eps := endpoints()
-	require.Len(t, eps, 9)
+	require.Len(t, eps, 11)
 
 	paths := make([]string, 0, len(eps))
 	for _, ep := range eps {
@@ -44,8 +44,10 @@ func TestEndpoints(t *testing.T) {
 		"",
 		"/configs/mod-api-key",
 		"/configs/mod-body-process",
+		"/quota/trigger-reset",
 		"/configs/rate-limit-policy",
 		"/configs/ai-route",
+		"/configs/epp_data/config",
 	}, paths)
 }
 
@@ -72,6 +74,8 @@ func TestRegisterRouter(t *testing.T) {
 	assert.Contains(t, matchedPaths, "/inner-api/v1/configs/extra_files/")
 	assert.Contains(t, matchedPaths, "/inner-api/v1/configs/mod-api-key")
 	assert.Contains(t, matchedPaths, "/inner-api/v1/configs/mod-body-process")
+	assert.Contains(t, matchedPaths, "/inner-api/v1/quota/trigger-reset")
 	assert.Contains(t, matchedPaths, "/inner-api/v1/configs/rate-limit-policy")
 	assert.Contains(t, matchedPaths, "/inner-api/v1/configs/ai-route")
+	assert.Contains(t, matchedPaths, "/inner-api/v1/configs/epp_data/config")
 }

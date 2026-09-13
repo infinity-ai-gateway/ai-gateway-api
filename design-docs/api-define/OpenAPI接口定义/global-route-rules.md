@@ -102,7 +102,8 @@
 5. 校验每个规则的 `Cond` 表达式是否合法
 6. 在持久化存储中，将 `type` 固定设置为 `global`，`owner` 固定设置为 `global`
 7. 写入或替换 `global_default` 路由表
-8. 返回结果
+8. 记录操作日志（`resource_type=route`，`resource_id=global`）
+9. 返回结果
 
 **返回数据（Data内容）**
 

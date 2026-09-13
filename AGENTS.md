@@ -45,7 +45,7 @@ Layered request flow:
 
 ## Build/test conventions
 
-- **Go version**: 1.22 (`go.mod`).
+- **Go version**: 1.24 (`go.mod`).
 - **Module**: `github.com/rainway-ai-gateway/ai-gateway-api`.
 - **Build**: `make` downloads deps and builds the `ai-gateway-api` binary.
 - **Test**:

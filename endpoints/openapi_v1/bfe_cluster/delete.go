@@ -15,7 +15,6 @@
 package bfe_cluster
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xerror"
@@ -54,7 +53,7 @@ func deleteActionProcess(req *http.Request, param *BFEClusterDeleteParam) error 
 		return err
 	}
 	if used {
-		return xerror.WrapParamErrorWithMsg(fmt.Sprintf("BFE cluster %s is used by AI cluster scheduler, cannot delete", *param.Name))
+		return xerror.WrapConflictErrorWithMsg("BFE cluster %s is used by AI cluster scheduler, cannot delete", *param.Name)
 	}
 
 	err = container.BFEClusterManager.DeleteBFECluster(req.Context(), &ibasic.BFEClusterParam{

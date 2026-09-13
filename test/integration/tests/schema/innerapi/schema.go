@@ -1,3 +1,17 @@
+// Copyright(c) 2026 The Rainway AI Gateway (壬远AI网关) Authors.
+//
+//Licensed under the Apache License, Version 2.0 (the "License");
+//you may not use this file except in compliance with the License.
+//You may obtain a copy of the License at
+//
+//http://www.apache.org/licenses/LICENSE-2.0
+//
+//Unless required by applicable law or agreed to in writing, software
+//distributed under the License is distributed on an "AS IS" BASIS,
+//WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//See the License for the specific language governing permissions and
+//limitations under the License.
+
 // Package innerapi 定义 InnerAPI v1 各接口返回值的 schema。
 // 由于 InnerAPI 大量字段为动态 key 的 map，本包优先校验顶层固定字段的类型，
 // 对动态 map 仅校验其为 object。
@@ -165,5 +179,25 @@ var AIRouteSchema = &testutil.ObjectSchema{
 		"Version":                  {Type: testutil.TypeString},
 		"RouteRules":               {Type: testutil.TypeObject},
 		"ApikeyRouteTableBindings": {Type: testutil.TypeObject},
+	},
+}
+
+// EppDataConfigBodySchema /configs/epp_data/config 返回 Config 段的 schema。
+// epp_config / assignment 均为 cluster 名动态 key 的 map（见 epp-data.md §3），
+// 按本包惯例仅校验为 object；条目级结构由测试中的定向断言覆盖。
+var EppDataConfigBodySchema = &testutil.ObjectSchema{
+	Required: []string{"epp_config", "assignment"},
+	Fields: map[string]testutil.FieldSpec{
+		"epp_config": {Type: testutil.TypeObject},
+		"assignment": {Type: testutil.TypeObject},
+	},
+}
+
+// EppDataSchema /configs/epp_data/config 返回 schema（epp-data.md §3.1）
+var EppDataSchema = &testutil.ObjectSchema{
+	Required: []string{"Version", "Config"},
+	Fields: map[string]testutil.FieldSpec{
+		"Version": {Type: testutil.TypeString},
+		"Config":  {Type: testutil.TypeObject, Nested: EppDataConfigBodySchema},
 	},
 }

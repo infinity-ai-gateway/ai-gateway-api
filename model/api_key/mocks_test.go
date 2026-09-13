@@ -294,6 +294,10 @@ func (c *fakeQuotaCache) ResetToQuota(ctx context.Context, key string, quota *fl
 	return nil
 }
 
+func (c *fakeQuotaCache) ResetToQuotaAtomic(ctx context.Context, key string, quota *float64, unit *string) error {
+	return c.ResetToQuota(ctx, key, quota, unit)
+}
+
 func (c *fakeQuotaCache) DeleteKeys(ctx context.Context, keys []string) error {
 	c.deleteKeysCalls = append(c.deleteKeysCalls, keys)
 	if c.deleteKeysFn != nil {

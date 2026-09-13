@@ -23,13 +23,23 @@ import (
 	"github.com/rainway-ai-gateway/ai-gateway-api/stateful"
 )
 
+const setQuotaScriptSrc = `
+redis.call('set', KEYS[1], ARGV[1])
+return 1
+`
+
 type redisQuotaCache struct {
-	client redis_client.Client
+	client            redis_client.Client
+	setQuotaScript    redis_client.RedisScript
 }
 
 // NewRedisQuotaCache creates a QuotaCache backed by Redis.
 func NewRedisQuotaCache(client redis_client.Client) QuotaCache {
-	return &redisQuotaCache{client: client}
+	c := &redisQuotaCache{client: client}
+	if client != nil {
+		c.setQuotaScript = client.NewScript(setQuotaScriptSrc)
+	}
+	return c
 }
 
 func (c *redisQuotaCache) GetRemaining(ctx context.Context, key string, unit *string) (float64, error) {
@@ -98,6 +108,17 @@ func (c *redisQuotaCache) SetRemaining(ctx context.Context, key string, quota *f
 
 func (c *redisQuotaCache) ResetToQuota(ctx context.Context, key string, quota *float64, unit *string) error {
 	return c.SetRemaining(ctx, key, quota, unit)
+}
+
+func (c *redisQuotaCache) ResetToQuotaAtomic(ctx context.Context, key string, quota *float64, unit *string) error {
+	if c.client == nil || quota == nil || c.setQuotaScript == nil {
+		return nil
+	}
+
+	redisKey := stateful.AIUsedQuotaKey(key)
+	targetValue := golibquota.PtrToRedisValue(quota, unit)
+	_, err := c.setQuotaScript.Run(redisKey, targetValue)
+	return err
 }
 
 func (c *redisQuotaCache) DeleteKeys(ctx context.Context, keys []string) error {

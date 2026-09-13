@@ -98,6 +98,41 @@ func UpdateByQueryAction(req *http.Request) (interface{}, error) {
 	return container.ModelPriceManager.FetchModelPrice(req.Context(), filter)
 }
 
+// mergePriceMap returns a new PriceMap with all keys from dst, overridden by
+// keys present in src. Keys absent from src keep their original values, so a
+// partial update never silently drops existing price entries (issue #140).
+// Neither dst nor src is modified.
+func mergePriceMap(dst, src imodel_price.PriceMap) imodel_price.PriceMap {
+	merged := make(imodel_price.PriceMap, len(dst)+len(src))
+	for k, v := range dst {
+		merged[k] = v
+	}
+	for k, v := range src {
+		merged[k] = v
+	}
+	return merged
+}
+
+// mergeTierPriceMap merges tier prices two levels deep: tiers present in src
+// are merged key-by-key (via mergePriceMap), tiers only in src are added
+// whole, and tiers absent from src are retained whole. Neither dst nor src is
+// modified.
+func mergeTierPriceMap(dst, src imodel_price.TierPriceMap) imodel_price.TierPriceMap {
+	merged := make(imodel_price.TierPriceMap, len(dst)+len(src))
+	for tier, prices := range dst {
+		// deep-copy retained tiers so merged never aliases dst's inner maps
+		merged[tier] = mergePriceMap(prices, nil)
+	}
+	for tier, prices := range src {
+		if existing, ok := merged[tier]; ok {
+			merged[tier] = mergePriceMap(existing, prices)
+		} else {
+			merged[tier] = prices
+		}
+	}
+	return merged
+}
+
 // mergeModelPrice merges non-empty fields from src into dst for partial update.
 func mergeModelPrice(dst, src *imodel_price.ModelPrice) *imodel_price.ModelPrice {
 	merged := *dst
@@ -123,10 +158,10 @@ func mergeModelPrice(dst, src *imodel_price.ModelPrice) *imodel_price.ModelPrice
 		merged.Limits = src.Limits
 	}
 	if len(src.Prices) > 0 {
-		merged.Prices = src.Prices
+		merged.Prices = mergePriceMap(dst.Prices, src.Prices)
 	}
 	if len(src.TierPrices) > 0 {
-		merged.TierPrices = src.TierPrices
+		merged.TierPrices = mergeTierPriceMap(dst.TierPrices, src.TierPrices)
 	}
 	if strings.TrimSpace(src.PriceCurrency) != "" {
 		merged.PriceCurrency = src.PriceCurrency

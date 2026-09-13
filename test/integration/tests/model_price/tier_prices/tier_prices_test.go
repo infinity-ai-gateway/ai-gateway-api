@@ -1,3 +1,17 @@
+// Copyright(c) 2026 The Rainway AI Gateway (壬远AI网关) Authors.
+//
+//Licensed under the Apache License, Version 2.0 (the "License");
+//you may not use this file except in compliance with the License.
+//You may obtain a copy of the License at
+//
+//http://www.apache.org/licenses/LICENSE-2.0
+//
+//Unless required by applicable law or agreed to in writing, software
+//distributed under the License is distributed on an "AS IS" BASIS,
+//WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//See the License for the specific language governing permissions and
+//limitations under the License.
+
 package tier_prices_test
 
 import (
@@ -238,6 +252,76 @@ models:
 			}
 		}
 		assert.True(t, found, "imported model price should be listed")
+	})
+
+	t.Run("MTP-1-007 部分更新 tier_prices 同档未传键保留", func(t *testing.T) {
+		provider := testutil.UniqueName("provider")
+		model := testutil.UniqueName("model")
+
+		id, err := testutil.CreateModelPrice(map[string]interface{}{
+			"provider":   provider,
+			"model":      model,
+			"base_model": model,
+			"mode":       "chat",
+			"prices": map[string]interface{}{
+				"input_cost_per_token": 0.000001,
+			},
+			"tier_prices": map[string]interface{}{
+				"peak": map[string]interface{}{
+					"input_cost_per_token":        0.0000091,
+					"output_cost_per_token":       0.0000102,
+					"cache_read_input_token_cost": 0.0000031,
+				},
+			},
+		})
+		if err != nil {
+			t.Fatalf("create model price failed: %v", err)
+		}
+		defer testutil.DeleteModelPrice(id)
+
+		resp, err := testutil.GetClient().Put("/open-api/v1/model-prices/"+int64ToStr(id), map[string]interface{}{
+			"tier_prices": map[string]interface{}{
+				"peak": map[string]interface{}{
+					"input_cost_per_token": 0.0000111,
+				},
+			},
+		})
+		if err != nil {
+			t.Fatalf("update model price failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+
+		assertTierPrices := func(tag string, data map[string]interface{}) {
+			tierPrices, ok := data["tier_prices"].(map[string]interface{})
+			if !assert.True(t, ok, "%s: tier_prices should be an object", tag) {
+				return
+			}
+			peak, ok := tierPrices["peak"].(map[string]interface{})
+			if !assert.True(t, ok, "%s: tier_prices.peak should be an object", tag) {
+				return
+			}
+			assert.InDelta(t, 0.0000111, peak["input_cost_per_token"], 0.0000001, "%s: submitted key overridden", tag)
+			assert.InDelta(t, 0.0000102, peak["output_cost_per_token"], 0.0000001, "%s: same-tier unsubmitted key kept (issue #140)", tag)
+			assert.InDelta(t, 0.0000031, peak["cache_read_input_token_cost"], 0.0000001, "%s: same-tier unsubmitted key kept (issue #140)", tag)
+		}
+
+		var data map[string]interface{}
+		if err := json.Unmarshal(resp.Data, &data); err != nil {
+			t.Fatalf("unmarshal data: %v", err)
+		}
+		assertTierPrices("put response", data)
+
+		// verify persisted state via GET
+		getResp, err := testutil.GetClient().Get("/open-api/v1/model-prices/" + int64ToStr(id))
+		if err != nil {
+			t.Fatalf("get model price failed: %v", err)
+		}
+		testutil.AssertSuccess(t, getResp)
+		var got map[string]interface{}
+		if err := json.Unmarshal(getResp.Data, &got); err != nil {
+			t.Fatalf("unmarshal get data: %v", err)
+		}
+		assertTierPrices("get response", got)
 	})
 }
 

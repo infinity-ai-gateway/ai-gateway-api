@@ -1,3 +1,17 @@
+// Copyright(c) 2026 The Rainway AI Gateway (壬远AI网关) Authors.
+//
+//Licensed under the Apache License, Version 2.0 (the "License");
+//you may not use this file except in compliance with the License.
+//You may obtain a copy of the License at
+//
+//http://www.apache.org/licenses/LICENSE-2.0
+//
+//Unless required by applicable law or agreed to in writing, software
+//distributed under the License is distributed on an "AS IS" BASIS,
+//WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//See the License for the specific language governing permissions and
+//limitations under the License.
+
 package entity_test
 
 import (
@@ -163,6 +177,80 @@ func TestEntity_PartialUpdate(t *testing.T) {
 		if resp.ErrNum != 422 {
 			t.Errorf("expected ErrNum=422, got ErrNum=%d, ErrMsg=%s", resp.ErrNum, resp.ErrMsg)
 		}
+	})
+
+	t.Run("E-5-006 部分更新省略 allow_models/block_models 保持原值（issue #151 回归）", func(t *testing.T) {
+		// 创建时显式指定 allow_models/block_models
+		createResp, err := testutil.GetClient().Post("/open-api/v1/entities", map[string]interface{}{
+			"name":         testutil.UniqueEntityName(),
+			"type":         typeName,
+			"allow_models": []string{"model-a"},
+			"block_models": []string{"model-b"},
+		})
+		if err != nil {
+			t.Fatalf("create entity failed: %v", err)
+		}
+		testutil.AssertSuccess(t, createResp)
+		id, err := testutil.GetDataField(createResp, "id")
+		if err != nil {
+			t.Fatalf("get id: %v", err)
+		}
+		patchID := id.(string)
+		defer testutil.DeleteEntity(patchID)
+
+		// PATCH 仅修改 block_models，省略 allow_models
+		resp, err := testutil.GetClient().Patch("/open-api/v1/entities/"+patchID, map[string]interface{}{
+			"block_models": []string{"model-c"},
+		})
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+
+		// allow_models 必须保持原值，不得被重置为 []
+		detail, err := testutil.GetClient().Get("/open-api/v1/entities/" + patchID)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, detail)
+		testutil.AssertDataFieldEquals(t, detail, "allow_models", []interface{}{"model-a"})
+		testutil.AssertDataFieldEquals(t, detail, "block_models", []interface{}{"model-c"})
+	})
+
+	t.Run("E-5-007 部分更新省略 models 时 name 修改生效且模型保持", func(t *testing.T) {
+		entityName := testutil.UniqueEntityName()
+		createResp, err := testutil.GetClient().Post("/open-api/v1/entities", map[string]interface{}{
+			"name":         entityName,
+			"type":         typeName,
+			"allow_models": []string{"model-a", "model-b"},
+		})
+		if err != nil {
+			t.Fatalf("create entity failed: %v", err)
+		}
+		testutil.AssertSuccess(t, createResp)
+		id, err := testutil.GetDataField(createResp, "id")
+		if err != nil {
+			t.Fatalf("get id: %v", err)
+		}
+		patchID := id.(string)
+		defer testutil.DeleteEntity(patchID)
+
+		newName := testutil.UniqueEntityName()
+		resp, err := testutil.GetClient().Patch("/open-api/v1/entities/"+patchID, map[string]interface{}{
+			"name": newName,
+		})
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+
+		detail, err := testutil.GetClient().Get("/open-api/v1/entities/" + patchID)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, detail)
+		testutil.AssertDataFieldEquals(t, detail, "name", newName)
+		testutil.AssertDataFieldEquals(t, detail, "allow_models", []interface{}{"model-a", "model-b"})
 	})
 
 	t.Cleanup(func() {

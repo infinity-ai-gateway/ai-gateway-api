@@ -84,7 +84,7 @@ func (s *RDBModelPriceStorager) DeleteAllModelPrices(ctx context.Context) error 
 		return err
 	}
 
-	_, err = dbCtx.Conn().ExecContext(dbCtx, fmt.Sprintf("DELETE FROM %s", dao.TModelPriceTableName()))
+	_, err = dbCtx.Execer().ExecContext(dbCtx, fmt.Sprintf("DELETE FROM %s", dao.TModelPriceTableName()))
 	return err
 }
 
@@ -150,7 +150,7 @@ func (s *RDBModelPriceStorager) ListProviders(ctx context.Context) ([]string, er
 		return nil, err
 	}
 
-	rows, err := dbCtx.Conn().QueryContext(dbCtx, fmt.Sprintf("SELECT DISTINCT provider FROM %s ORDER BY provider", dao.TModelPriceTableName()))
+	rows, err := dbCtx.Execer().QueryContext(dbCtx, fmt.Sprintf("SELECT DISTINCT provider FROM %s ORDER BY provider", dao.TModelPriceTableName()))
 	if err != nil {
 		return nil, err
 	}

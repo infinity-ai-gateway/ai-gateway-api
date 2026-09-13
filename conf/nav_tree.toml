@@ -9,7 +9,8 @@ children = [
     { id = "AIGatewayInstancePool.list", text = "AIGatewayInstancePoolManage", allowed_roles = ["admin"] },
     { id = "AICluster.list", text = "AIClusterManage", allowed_roles = ["admin"] },
     { id = "ModelPrice.list", text = "ModelPriceManage", allowed_roles = ["admin"] },
-    { id = "Provider.list", text = "ProviderManage", allowed_roles = ["admin"] }
+    { id = "Provider.list", text = "ProviderManage", allowed_roles = ["admin"] },
+    { id = "EppPool.list", text = "EppPoolManage", allowed_roles = ["admin"] }
 ]
 
 [[children]]
@@ -32,4 +33,9 @@ children = [
 [[children]]
 id = "user.list"
 text = "UserManage"
+allowed_roles = ["admin"]
+
+[[children]]
+id = "OperationLog.list"
+text = "OperationLogManage"
 allowed_roles = ["admin"]

@@ -1,8 +1,23 @@
+// Copyright(c) 2026 The Rainway AI Gateway (壬远AI网关) Authors.
+//
+//Licensed under the Apache License, Version 2.0 (the "License");
+//you may not use this file except in compliance with the License.
+//You may obtain a copy of the License at
+//
+//http://www.apache.org/licenses/LICENSE-2.0
+//
+//Unless required by applicable law or agreed to in writing, software
+//distributed under the License is distributed on an "AS IS" BASIS,
+//WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//See the License for the specific language governing permissions and
+//limitations under the License.
+
 package testutil
 
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,23 +32,33 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	golibquota "github.com/bfenetworks/go-lib/quota"
+	_ "github.com/rainway-ai-gateway/ai-gateway-api/stateful"
 )
 
 // ServerManager 测试服务器管理器
 type ServerManager struct {
-	cmd        *exec.Cmd
-	cancel     context.CancelFunc
-	ServerURL  string
-	DBPath     string
-	DataDir    string
-	ConfDir    string
-	binPath    string
-	tmpConfDir string
-	Redis      *miniredis.Miniredis
+	cmd         *exec.Cmd
+	cancel      context.CancelFunc
+	ServerURL   string
+	DBPath      string
+	DataDir     string
+	ConfDir     string
+	binPath     string
+	tmpConfDir  string
+	Redis       *miniredis.Miniredis
+	sharedRedis bool // Redis 是否由外部共享，Shutdown 时不关闭
+	sharedDB    bool // DB 是否由外部共享，Shutdown 时不删除
 }
 
 // StartServer 使用项目编译的 ai-gateway-api.exe 作为子进程启动测试服务器
 func StartServer() (*ServerManager, error) {
+	return StartServerWithSharedInfra(nil, "")
+}
+
+// StartServerWithSharedInfra 启动一个测试服务器，可复用外部传入的 miniredis 与 SQLite 数据库文件。
+// 当 sharedRedis == nil 时创建新的 miniredis；当 sharedDBPath == "" 时创建新的 SQLite 数据库。
+// 该函数用于多实例部署场景，让多个 ai-gateway-api 实例共享同一 Redis（分布式锁）与同一 DB。
+func StartServerWithSharedInfra(sharedRedis *miniredis.Miniredis, sharedDBPath string) (*ServerManager, error) {
 	sm := &ServerManager{}
 
 	// 1. 获取 integration 目录和项目根目录
@@ -58,23 +83,29 @@ func StartServer() (*ServerManager, error) {
 		return nil, fmt.Errorf("create data dir: %w", err)
 	}
 
-	// 2. 生成唯一数据库文件名
-	dbPath := filepath.Join(dataDir, fmt.Sprintf("test_ai_gateway_%d.db", os.Getpid()))
+	// 2. 数据库文件
+	var dbPath string
+	if sharedDBPath != "" {
+		dbPath = sharedDBPath
+		sm.sharedDB = true
+	} else {
+		dbPath = filepath.Join(dataDir, fmt.Sprintf("test_ai_gateway_%d.db", os.Getpid()))
+
+		// 3. 初始化 SQLite 数据库（执行 DDL）
+		ddlPath := filepath.Join(projectRoot, "db_ddl_sqlite.sql")
+		if _, err := os.Stat(ddlPath); os.IsNotExist(err) {
+			ddlPath = filepath.Join(testRoot, "..", "..", "db_ddl_sqlite.sql")
+		}
+		if err := InitTestDB(dbPath, ddlPath); err != nil {
+			return nil, fmt.Errorf("init test db: %w", err)
+		}
+
+		// 3.5 插入默认测试数据
+		if err := SeedTestData(dbPath); err != nil {
+			return nil, fmt.Errorf("seed test data: %w", err)
+		}
+	}
 	sm.DBPath = dbPath
-
-	// 3. 初始化 SQLite 数据库（执行 DDL）
-	ddlPath := filepath.Join(projectRoot, "db_ddl_sqlite.sql")
-	if _, err := os.Stat(ddlPath); os.IsNotExist(err) {
-		ddlPath = filepath.Join(testRoot, "..", "..", "db_ddl_sqlite.sql")
-	}
-	if err := InitTestDB(dbPath, ddlPath); err != nil {
-		return nil, fmt.Errorf("init test db: %w", err)
-	}
-
-	// 3.5 插入默认测试数据
-	if err := SeedTestData(dbPath); err != nil {
-		return nil, fmt.Errorf("seed test data: %w", err)
-	}
 
 	// 4. 查找真实 ai-gateway-api.exe 二进制
 	binSrc := filepath.Join(projectRoot, "ai-gateway-api.exe")
@@ -83,15 +114,22 @@ func StartServer() (*ServerManager, error) {
 	}
 
 	// 复制到 data 目录（避免文件锁冲突）
-	sm.binPath = filepath.Join(dataDir, fmt.Sprintf("ai-gateway-api-%d.exe", os.Getpid()))
+	sm.binPath = filepath.Join(dataDir, fmt.Sprintf("ai-gateway-api-%d-%d.exe", os.Getpid(), time.Now().UnixNano()))
 	if err := copyFile(binSrc, sm.binPath); err != nil {
 		return nil, fmt.Errorf("copy binary: %w", err)
 	}
 
-	// 5. 启动嵌入式 Redis（miniredis），供测试进程直接写入配额等 Redis 数据
-	redisServer, err := miniredis.Run()
-	if err != nil {
-		return nil, fmt.Errorf("start miniredis: %w", err)
+	// 5. Redis
+	var redisServer *miniredis.Miniredis
+	if sharedRedis != nil {
+		redisServer = sharedRedis
+		sm.sharedRedis = true
+	} else {
+		r, err := miniredis.Run()
+		if err != nil {
+			return nil, fmt.Errorf("start miniredis: %w", err)
+		}
+		redisServer = r
 	}
 	sm.Redis = redisServer
 
@@ -107,7 +145,7 @@ func StartServer() (*ServerManager, error) {
 	}
 	sm.tmpConfDir = tmpConfDir
 
-	// 6. 启动 ai-gateway-api 子进程
+	// 7. 启动 ai-gateway-api 子进程
 	ctx, cancel := context.WithCancel(context.Background())
 	sm.cancel = cancel
 
@@ -133,7 +171,7 @@ func StartServer() (*ServerManager, error) {
 	}
 	sm.cmd = serverCmd
 
-	// 7. 等待服务器就绪（TCP 拨号检测，带超时）
+	// 8. 等待服务器就绪（TCP 拨号检测，带超时）
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	sm.ServerURL = fmt.Sprintf("http://%s", addr)
 
@@ -156,8 +194,10 @@ func StartServer() (*ServerManager, error) {
 		return nil, fmt.Errorf("server ready: %s", errMsg)
 	}
 
-	// 设置全局客户端
-	SetServerURL(sm.ServerURL)
+	// 设置全局客户端（仅当非共享模式时，避免覆盖其他实例的 URL）
+	if sharedRedis == nil && sharedDBPath == "" {
+		SetServerURL(sm.ServerURL)
+	}
 
 	return sm, nil
 }
@@ -184,13 +224,13 @@ func (sm *ServerManager) Shutdown() {
 		os.RemoveAll(sm.tmpConfDir)
 	}
 
-	// 清理数据库文件
-	if sm.DBPath != "" {
+	// 清理数据库文件（仅当 DB 非外部共享时）
+	if sm.DBPath != "" && !sm.sharedDB {
 		CleanupTestDB(sm.DBPath)
 	}
 
-	// 关闭 miniredis
-	if sm.Redis != nil {
+	// 关闭 miniredis（仅当 Redis 非外部共享时）
+	if sm.Redis != nil && !sm.sharedRedis {
 		sm.Redis.Close()
 	}
 }
@@ -378,6 +418,64 @@ func (sm *ServerManager) GetQuotaRemaining(ownerKey string, unit string) float64
 		return 0
 	}
 	return golibquota.FromRedisValue(value, unit)
+}
+
+// UpdateQuotaPlanLastResetAt 直接更新 SQLite 中某 API-Key / Entity 对应 quota_plans.last_reset_at。
+// ownerType 取 "api_key" 或 "entity"。
+func (sm *ServerManager) UpdateQuotaPlanLastResetAt(ownerID string, ownerType string, lastResetAt time.Time) error {
+	db, err := sql.Open("sqlite-strip", sm.DBPath)
+	if err != nil {
+		return fmt.Errorf("open sqlite db: %w", err)
+	}
+	defer db.Close()
+
+	var quotaPlanID int64
+	switch ownerType {
+	case "api_key":
+		err = db.QueryRow("SELECT quota_plan_id FROM api_keys WHERE id = ?", ownerID).Scan(&quotaPlanID)
+	case "entity":
+		err = db.QueryRow("SELECT quota_plan_id FROM entities WHERE entity_id = ?", ownerID).Scan(&quotaPlanID)
+	default:
+		return fmt.Errorf("unsupported ownerType: %s", ownerType)
+	}
+	if err != nil {
+		return fmt.Errorf("find quota_plan_id for %s %s: %w", ownerType, ownerID, err)
+	}
+
+	_, err = db.Exec("UPDATE quota_plans SET last_reset_at = ? WHERE id = ?", lastResetAt, quotaPlanID)
+	if err != nil {
+		return fmt.Errorf("update quota_plans.last_reset_at: %w", err)
+	}
+	return nil
+}
+
+// GetQuotaPlanLastResetAt 读取某 API-Key / Entity 对应 quota_plans.last_reset_at。
+func (sm *ServerManager) GetQuotaPlanLastResetAt(ownerID string, ownerType string) (*time.Time, error) {
+	db, err := sql.Open("sqlite-strip", sm.DBPath)
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite db: %w", err)
+	}
+	defer db.Close()
+
+	var quotaPlanID int64
+	switch ownerType {
+	case "api_key":
+		err = db.QueryRow("SELECT quota_plan_id FROM api_keys WHERE id = ?", ownerID).Scan(&quotaPlanID)
+	case "entity":
+		err = db.QueryRow("SELECT quota_plan_id FROM entities WHERE entity_id = ?", ownerID).Scan(&quotaPlanID)
+	default:
+		return nil, fmt.Errorf("unsupported ownerType: %s", ownerType)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find quota_plan_id for %s %s: %w", ownerType, ownerID, err)
+	}
+
+	var lastResetAt time.Time
+	err = db.QueryRow("SELECT last_reset_at FROM quota_plans WHERE id = ?", quotaPlanID).Scan(&lastResetAt)
+	if err != nil {
+		return nil, fmt.Errorf("select quota_plans.last_reset_at: %w", err)
+	}
+	return &lastResetAt, nil
 }
 
 // findIntegrationRoot 查找 integration 目录

@@ -19,6 +19,8 @@ import (
 	"math"
 	"strings"
 
+	"github.com/bfenetworks/go-lib/quota"
+
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xerror"
 )
 
@@ -41,27 +43,27 @@ var ValidModes = map[string]bool{
 
 // Capability enums.
 var ValidCapabilities = map[string]bool{
-	"chat":               true,
-	"vision":             true,
-	"audio_input":        true,
-	"video_input":        true,
-	"reasoning":          true,
-	"tools":              true,
-	"structured_outputs": true,
-	"function_calling":   true,
-	"prompt_caching":     true,
-	"computer_use":       true,
-	"web_search":         true,
-	"serverless":         true,
-	"image_generation":   true,
-	"embedding":          true,
-	"rerank":             true,
-	"audio_speech":       true,
+	"chat":                true,
+	"vision":              true,
+	"audio_input":         true,
+	"video_input":         true,
+	"reasoning":           true,
+	"tools":               true,
+	"structured_outputs":  true,
+	"function_calling":    true,
+	"prompt_caching":      true,
+	"computer_use":        true,
+	"web_search":          true,
+	"serverless":          true,
+	"image_generation":    true,
+	"embedding":           true,
+	"rerank":              true,
+	"audio_speech":        true,
 	"audio_transcription": true,
-	"video_generation":   true,
-	"ocr":                true,
-	"search":             true,
-	"realtime":           true,
+	"video_generation":    true,
+	"ocr":                 true,
+	"search":              true,
+	"realtime":            true,
 }
 
 // Supported parameter enums.
@@ -85,34 +87,62 @@ var ValidSupportedParameters = map[string]bool{
 
 // Limits key enums.
 var ValidLimitKeys = map[string]bool{
-	"context_window":     true,
-	"max_input_tokens":   true,
-	"max_output_tokens":  true,
-	"max_tokens":         true,
+	"context_window":    true,
+	"max_input_tokens":  true,
+	"max_output_tokens": true,
+	"max_tokens":        true,
 }
 
 // Prices key enums.
 var ValidPriceKeys = map[string]bool{
-	"input_cost_per_token":                       true,
-	"output_cost_per_token":                      true,
-	"cache_read_input_token_cost":                true,
-	"cache_creation_input_token_cost":            true,
-	"input_cost_per_token_above_200k_tokens":     true,
-	"output_cost_per_token_above_200k_tokens":    true,
-	"output_cost_per_image":                      true,
-	"output_cost_per_pixel":                      true,
-	"output_cost_per_image_low_quality":          true,
-	"output_cost_per_image_high_quality":         true,
-	"input_cost_per_audio_per_second":            true,
-	"input_cost_per_video_per_second":            true,
-	"output_cost_per_second":                     true,
-	"input_cost_per_query":                       true,
-	"search_context_cost_per_query":              true,
-	"ocr_cost_per_page":                          true,
-	"output_cost_per_character":                  true,
-	"output_cost_per_image_hd":                   true,
-	"output_cost_per_video":                      true,
-	"output_cost_per_video_per_second":           true,
+	"input_cost_per_token":                    true,
+	"output_cost_per_token":                   true,
+	"cache_read_input_token_cost":             true,
+	"cache_creation_input_token_cost":         true,
+	"input_cost_per_token_above_200k_tokens":  true,
+	"output_cost_per_token_above_200k_tokens": true,
+	"output_cost_per_image":                   true,
+	"output_cost_per_pixel":                   true,
+	"output_cost_per_image_low_quality":       true,
+	"output_cost_per_image_high_quality":      true,
+	"input_cost_per_audio_per_second":         true,
+	"input_cost_per_video_per_second":         true,
+	"output_cost_per_second":                  true,
+	"input_cost_per_query":                    true,
+	"search_context_cost_per_query":           true,
+	"ocr_cost_per_page":                       true,
+	"output_cost_per_character":               true,
+	"output_cost_per_image_hd":                true,
+	"output_cost_per_video":                   true,
+	"output_cost_per_video_per_second":        true,
+	// 对齐 BFE（BFE 已支持，api 缺失）
+	"input_cost_per_image_token":  true,
+	"input_cost_per_audio_token":  true,
+	"output_cost_per_audio_token": true,
+	// 新增：1h TTL 缓存写价
+	"cache_creation_input_token_cost_1h": true,
+	// 长度分档（硬编码；200k 档已有）
+	"input_cost_per_token_above_256k_tokens":  true,
+	"output_cost_per_token_above_256k_tokens": true,
+	"input_cost_per_token_above_272k_tokens":  true,
+	"output_cost_per_token_above_272k_tokens": true,
+	"input_cost_per_token_above_512k_tokens":  true,
+	"output_cost_per_token_above_512k_tokens": true,
+}
+
+// maxPriceFixedPoint is the largest price value (scaled by quota.RmbPrecision)
+// that still keeps the downstream float64 cost computation
+// (usage * (price * 1e8)) exactly representable: float64 integers stay exact
+// up to 2^53.
+const maxPriceFixedPoint = 1 << 53
+
+// checkPricePrecision rejects prices whose scaled value reaches 2^53, where
+// float64 can no longer represent the downstream cost computation exactly.
+func checkPricePrecision(key string, v float64) error {
+	if v*quota.RmbPrecision >= maxPriceFixedPoint {
+		return xerror.WrapParamErrorWithMsg("price %s exceeds the maximum representable precision", key)
+	}
+	return nil
 }
 
 // Metadata key enums.
@@ -191,6 +221,9 @@ func ValidateModelPrice(m *ModelPrice) error {
 		if v < 0 {
 			return xerror.WrapParamErrorWithMsg("price %s must be >= 0", k)
 		}
+		if err := checkPricePrecision(k, v); err != nil {
+			return err
+		}
 	}
 
 	for tierName, tierPrices := range m.TierPrices {
@@ -207,6 +240,9 @@ func ValidateModelPrice(m *ModelPrice) error {
 			}
 			if v < 0 {
 				return xerror.WrapParamErrorWithMsg("tier price %s in tier %s must be >= 0", k, tierName)
+			}
+			if err := checkPricePrecision(fmt.Sprintf("%s in tier %s", k, tierName), v); err != nil {
+				return err
 			}
 		}
 	}

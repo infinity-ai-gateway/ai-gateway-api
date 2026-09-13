@@ -17,7 +17,9 @@ package xreq
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -31,16 +33,37 @@ type RequestInfo struct {
 	StartTime time.Time
 	Duration  time.Duration
 
-	URLPath  string
-	Method   string
-	ClientIP string
-	LogID    string
+	URLPath   string
+	Method    string
+	ClientIP  string
+	UserAgent string
+	LogID     string
 
 	URLPattern string
 
 	StatusCode int
 	RetMsg     string
 	ErrDetail  string
+}
+
+// clientIPFromRequest extracts the real client IP from the request.
+// The custom ClientIp header is preferred for backward compatibility,
+// falling back to the first X-Forwarded-For entry, and finally to
+// RemoteAddr (with the port stripped).
+func clientIPFromRequest(req *http.Request) string {
+	if v := req.Header.Get("ClientIp"); v != "" {
+		return v
+	}
+	if xff := req.Header.Get("X-Forwarded-For"); xff != "" {
+		if i := strings.IndexByte(xff, ','); i >= 0 {
+			return strings.TrimSpace(xff[:i])
+		}
+		return strings.TrimSpace(xff)
+	}
+	if host, _, err := net.SplitHostPort(req.RemoteAddr); err == nil {
+		return host
+	}
+	return req.RemoteAddr
 }
 
 func InitRequestInfo(ctx context.Context, req *http.Request) (context.Context, *RequestInfo) {
@@ -51,7 +74,8 @@ func InitRequestInfo(ctx context.Context, req *http.Request) (context.Context, *
 	requestInfo = &RequestInfo{
 		StartTime:  time.Now(),
 		URLPath:    req.URL.Path,
-		ClientIP:   req.Header.Get("ClientIp"),
+		ClientIP:   clientIPFromRequest(req),
+		UserAgent:  req.Header.Get("User-Agent"),
 		Method:     req.Method,
 		StatusCode: 200,
 	}

@@ -48,7 +48,7 @@ func DeleteAction(req *http.Request) (interface{}, error) {
 		return nil, err
 	}
 
-	return map[string]interface{}{"deleted": true}, nil
+	return nil, nil
 }
 
 // ProviderDeleteCheckerFunc adapts a manager method to the signature expected by ProviderManager.

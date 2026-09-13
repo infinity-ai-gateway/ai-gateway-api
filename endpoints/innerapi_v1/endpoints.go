@@ -18,11 +18,13 @@ import (
 	"github.com/gorilla/mux"
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/innerapi_v1/ai_route"
+	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/innerapi_v1/epp_data"
 	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/innerapi_v1/extra_file"
 	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/innerapi_v1/gslb_data"
 	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/innerapi_v1/mod_api_key"
 	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/innerapi_v1/mod_body_process"
 	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/innerapi_v1/protocol"
+	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/innerapi_v1/quota_reset"
 	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/innerapi_v1/rate_limit_policy"
 	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/innerapi_v1/server_data"
 	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/middleware"
@@ -38,8 +40,10 @@ func endpoints() []*xreq.Endpoint {
 		extra_file.ExportExtraFileEndpoint,
 		mod_api_key.ExportRoute,
 		mod_body_process.ExportRoute,
+		quota_reset.TriggerResetRoute,
 		rate_limit_policy.ExportRoute,
 		ai_route.ExportRoute,
+		epp_data.ExportRoute,
 	}
 }
 

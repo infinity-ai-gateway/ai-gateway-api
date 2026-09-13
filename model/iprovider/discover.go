@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xerror"
@@ -89,7 +90,7 @@ func (m *ProviderManager) DiscoverModelsWithCaller(ctx context.Context, param *D
 
 	uri := param.URI
 	if uri == "" {
-		uri = "/v1/models"
+		uri = defaultModelDiscoveryURI(param.ModelProtocol)
 	}
 	url := fmt.Sprintf("%s://%s:%d%s", param.Schema, param.Addr, param.Port, uri)
 
@@ -150,9 +151,11 @@ func startsWithSlash(s string) bool {
 
 // modelParser describes how to extract model names from a provider discovery response.
 type modelParser struct {
-	ListPath  string // JSON key of the array containing model entries
-	IDField   string // field used as the canonical model identifier
-	NameField string // fallback field used when IDField is absent or empty
+	ListPath    string // JSON key of the array containing model entries
+	IDField     string // field used as the canonical model identifier
+	NameField   string // fallback field used when IDField is absent or empty
+	DefaultURI  string // default discovery endpoint when the request does not specify uri
+	StripPrefix string // prefix stripped from extracted model ids (e.g. gemini "models/")
 }
 
 // modelProtocolParsers maps model protocol names to their discovery response parsers.
@@ -161,15 +164,33 @@ type modelParser struct {
 // parser based on model_protocol.
 var modelProtocolParsers = map[string]modelParser{
 	"openai": {
-		ListPath:  "data",
-		IDField:   "id",
-		NameField: "object",
+		ListPath:   "data",
+		IDField:    "id",
+		NameField:  "object",
+		DefaultURI: "/v1/models",
 	},
 	"anthropic": {
-		ListPath:  "models",
-		IDField:   "model_id",
-		NameField: "display_name",
+		ListPath:   "models",
+		IDField:    "model_id",
+		NameField:  "display_name",
+		DefaultURI: "/v1/models",
 	},
+	"gemini": {
+		ListPath:    "models",
+		IDField:     "name",
+		NameField:   "",
+		DefaultURI:  "/v1beta/models",
+		StripPrefix: "models/",
+	},
+}
+
+// defaultModelDiscoveryURI returns the default discovery endpoint for the given
+// protocol, falling back to /v1/models for unknown protocols.
+func defaultModelDiscoveryURI(protocol string) string {
+	if parser, ok := modelProtocolParsers[protocol]; ok && parser.DefaultURI != "" {
+		return parser.DefaultURI
+	}
+	return "/v1/models"
 }
 
 // ParseModelDiscoveryResponse extracts a model name list from a provider discovery response.
@@ -201,8 +222,13 @@ func parseWithModelParser(data map[string]interface{}, parser modelParser, proto
 			continue
 		}
 		if id, ok := m[parser.IDField].(string); ok && id != "" {
-			models = append(models, id)
-			continue
+			if parser.StripPrefix != "" {
+				id = strings.TrimPrefix(id, parser.StripPrefix)
+			}
+			if id != "" {
+				models = append(models, id)
+				continue
+			}
 		}
 		if parser.NameField != "" {
 			if name, ok := m[parser.NameField].(string); ok && name != "" {

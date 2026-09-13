@@ -260,6 +260,51 @@ func newResetTestManager(
 	return NewBalanceSyncManager(&fakeTxn{}, apiKeyStorager, planStorager, entityStorager, quotacache.NewRedisQuotaCache(stateful.NewMockRedisClient()), clock)
 }
 
+func TestResetExpiredBalances_ConditionalUpdateUsesPeriodStart(t *testing.T) {
+	ctx := context.Background()
+	planID := int64(1)
+	quota := float64(1000)
+	apiKey := "ak-conditional"
+	// last_reset_at is Monday 00:00:05, so the period start is Monday 00:00:00.
+	lastReset := time.Date(2026, 7, 27, 0, 0, 5, 0, time.UTC)
+	now := time.Date(2026, 8, 3, 9, 0, 0, 0, time.UTC) // next Monday
+
+	planStorager := &fakeQuotaPlanStorager{
+		listFn: func(ctx context.Context, filter *QuotaPlanFilter) ([]*QuotaPlanParam, error) {
+			return []*QuotaPlanParam{{
+				ID:          &planID,
+				Quota:       &quota,
+				Unlimited:   lib.PBool(false),
+				ResetPeriod: lib.PString("weekly"),
+				LastResetAt: &lastReset,
+			}}, nil
+		},
+		fetchFn: func(ctx context.Context, filter *QuotaPlanFilter) (*QuotaPlanParam, error) {
+			return &QuotaPlanParam{ID: &planID, Quota: &quota}, nil
+		},
+		updateFn: func(ctx context.Context, filter *QuotaPlanFilter, param *QuotaPlanParam) (int64, error) {
+			require.NotNil(t, filter.LastResetAtBefore)
+			expected := time.Date(2026, 8, 3, 0, 0, 0, 0, time.UTC)
+			assert.Equal(t, expected, *filter.LastResetAtBefore)
+			return 1, nil
+		},
+	}
+	apiKeyStorager := &fakeAPIKeyStorager{
+		fetchListFn: func(ctx context.Context, filter *api_key.APIKeyFilter) ([]*api_key.APIKeyParam, error) {
+			createdAt := time.Now()
+			return []*api_key.APIKeyParam{{
+				ID:          lib.PString("ak-id-1"),
+				Key:         &apiKey,
+				KeyCreateAt: &createdAt,
+			}}, nil
+		},
+	}
+
+	m := NewBalanceSyncManager(&fakeTxn{}, apiKeyStorager, planStorager, &fakeEntityStorager{},
+		quotacache.NewRedisQuotaCache(stateful.NewMockRedisClient()), &fakeClock{t: now})
+	require.NoError(t, m.ResetExpiredBalances(ctx))
+}
+
 func TestResetExpiredBalances_WithFakeClock(t *testing.T) {
 	ctx := context.Background()
 	planID := int64(1)
