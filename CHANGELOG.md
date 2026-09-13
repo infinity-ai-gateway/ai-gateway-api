@@ -9,6 +9,34 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.0.9] - 2026-09-13
+
+### Added
+- Add operation log module: record create/update/delete operations including failed writes, with diff_keys, user_agent and real client_ip; add operation-log menu.
+- Add EPP scheduling integration: distribute `balance_mode`, `epp_config`, EPP pools and assignments via unified `epp_data` export.
+- Support Gemini provider protocol (model_protocols enum, `x-goog-api-key` auth header, discover URI mapping and models/ prefix stripping).
+- Extend model prices: length-tier prices, 1h cache-write cost, image/audio token price keys; support scientific notation and >8-decimal precision prices.
+- Add distributed lock for the quota reset scheduler.
+
+### Changed
+- Upgrade data-plane dependency `github.com/bfenetworks/bfe` to v1.8.7 (with `bfe-access-pb` v0.3.6 and `go-lib` v0.0.4).
+- Bump `golang.org/x/crypto` from 0.32.0 to 0.45.0.
+- Make exported config version numbers strictly monotonic per topic to avoid same-second version collisions stalling version advancement.
+- Align API-Key route table type with the API documentation.
+
+### Fixed
+- Fix DAO statements not bound to the real transaction: updates took effect while the API returned 409.
+- Fix entity update failure audit log losing resource identity.
+- Fix PATCH semantics: omitted `models`/`subnet` on API keys no longer reset to `["*"]`; omitted `allow_models`/`block_models` on entities keep original values; PATCH /providers partial update keeps original values for omitted fields.
+- Fix model-prices PUT partial update to merge `prices`/`tier_prices` by key; document merge-import whole-row overwrite contract.
+- Fix DELETE model-prices/providers returning `Data: null` to match the API contract.
+- Fix entity name charset to allow `@` (username@project form); allocate entity IDs from a sequence table to fix concurrent conflicts and ID reuse after deletion.
+- Fix cert_name charset whitelist so certificates containing `/` can be deleted.
+- Fix single-character cluster name lookup/delete wrongly rejected by the URI `min=2` parameter.
+- Fix resource dependency conflicts returning 500/422 instead of 409.
+- Fix operation-log pagination returning total 0 on the second page; log global route table updates.
+- Add copyright headers to all Go files under `test/`.
+
 ## [0.0.8] - 2026-08-29
 
 ### Added
